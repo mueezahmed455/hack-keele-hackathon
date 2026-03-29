@@ -127,7 +127,14 @@ setInterval(poll,2000);poll();</script></body></html>
 void setup() {
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, SLAVE_RX, SLAVE_TX);
-  esp_task_wdt_init(10, true);
+  
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = 10000,      // 10 seconds
+    .idle_core_mask = 0,      // watch both cores (0 = both)
+    .trigger_panic = true
+  };
+
+  esp_task_wdt_init(&wdt_config);
   esp_task_wdt_add(NULL);
   Wire.begin(PIN_SDA, PIN_SCL);
 
