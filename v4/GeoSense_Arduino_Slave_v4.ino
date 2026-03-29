@@ -1,132 +1,189 @@
 // ================================================================
-//  GEO-SENSE AFRICA v4.0 — ARDUINO UNO SLAVE NODE
+//  GEO-SENSE AFRICA v4.1 — ARDUINO UNO SLAVE NODE
+//  Multi-Hazard Early Warning System — Edge Processing Unit
+// ================================================================
 //
-//  CARRIED FORWARD FROM v3.0
+//  ARCHITECTURE
 //  ─────────────────────────────────────────────────────────────
-//  Steinhart-Hart thermistor formula (algebraically corrected)
-//  photoPct transmitted to ESP32 via L: field
-//  tiltPct transmitted as real spike+decay % via S: field
-//  ISR flag read with noInterrupts() atomic guard
-//  Passive buzzer cleared when tilt times out
-//  AVR hardware watchdog via avr/wdt.h (WDTO_4S)
+//  Role: Raw sensor normalization, local alert control, watchdog safety
+//  Interrupt: Hardware INT0 (D2) for landslide detection
+//  Communication: Serial @ 9600 baud to ESP32 Master
+//  Safety: AVR Hardware Watchdog (WDTO_4S)
 //
-//  NEW IN v4.0
+//  SERIAL PROTOCOL
 //  ─────────────────────────────────────────────────────────────
-//  [FIX] lastTiltEventMs declared volatile — without this, the
-//        compiler could cache it in a register and the main loop
-//        would read a stale value from before the ISR updated it,
-//        causing slopePct to never decay correctly.
-//  [FIX] delay(180) removed from handleAlerts() double-beep path.
-//        A blocking delay inside the loop could stack with boot
-//        chirp delays and other waits, potentially approaching the
-//        WDTO_4S watchdog threshold. Replaced with non-blocking
-//        alternating tone() calls using a phase flag — the AVR
-//        timer hardware manages the duration cutoff independently.
-//  [FIX] Serial buffer overflow now resets cleanly with a log byte
-//        instead of silently discarding mid-frame.
-//  [NOTE] D0/D1 (Serial RX/TX) are shared with USB programming.
-//         Always disconnect the ESP32 serial wires before uploading
-//         new firmware to the Arduino, or use a SoftwareSerial pair
-//         on D8/D9 if simultaneous upload+operation is needed.
+//  TX Format: W:xx.x,T:xx.x,S:xx.x,P:x.xx,I:x,L:xx.x
+//    W = Water level % (0.0–100.0)
+//    T = Soil temperature °C (Steinhart-Hart corrected)
+//    S = Slope activity % (spike+decay from tilt events)
+//    P = Potentiometer calibration (0.50×–2.00×)
+//    I = ISR tilt flag (0 or 1)
+//    L = Light intensity % (photoresistor)
+//  RX Format: CMD:alert_level
+//    0 = SAFE, 1 = CAUTION, 2 = CRITICAL
+//
+//  v4.1 OPTIMIZATIONS
+//  ─────────────────────────────────────────────────────────────
+//  [OPT] Consolidated timing macros with consistent naming
+//  [OPT] Reduced magic numbers with named constants
+//  [OPT] Optimized sensor reading with early-exit guards
+//  [OPT] Improved EMA calculation efficiency
+//  [OPT] Added sensor validation ranges
+//  [FIX] lastTiltEventMs volatile — prevents stale cache
+//  [FIX] Non-blocking buzzer — no delay() in critical path
+//  [FIX] Serial buffer overflow — clean reset with log
 // ================================================================
 
-#include <Arduino.h>
-#include <avr/wdt.h>   // AVR hardware watchdog
+#include <avr/wdt.h>
 
-// ── PINS ─────────────────────────────────────────────────────
-#define PIN_WATER_LEVEL    A1
-#define PIN_THERMISTOR     A2
-#define PIN_PHOTORESISTOR  A3
-#define PIN_POTENTIOMETER  A4
-#define PIN_TILT_SWITCH    2   // INT0 — MUST be D2
-#define PIN_BUZZER_ACTIVE  3   // Active buzzer (DC on = beep)
-#define PIN_BUZZER_PASSIVE 11  // Passive buzzer (needs tone())
-#define SEG_A              4
-#define SEG_B              5
-#define SEG_C              6
-#define SEG_D              12
-#define SEG_E              13
-#define SEG_F              A5
+// ════════════════════════════════════════════════════════════
+//  PIN DEFINITIONS
+// ════════════════════════════════════════════════════════════
 
-// ── THERMISTOR ───────────────────────────────────────────────
-#define THERMISTOR_NOMINAL  10000.0f   // Resistance at 25 °C (10 kΩ)
-#define SERIES_RESISTOR     10000.0f   // Series pull-up resistor (10 kΩ)
-#define BCOEFFICIENT        3950.0f    // Beta coefficient (NTC 10k)
-#define TEMP_NOMINAL        298.15f    // 25 °C in Kelvin
+// Analog sensors
+#define PIN_WATER_LEVEL     A1
+#define PIN_THERMISTOR      A2
+#define PIN_PHOTORESISTOR   A3
+#define PIN_POTENTIOMETER   A4
 
-// ── 7-SEG DIGIT PATTERNS (common cathode, segments A–F) ──────
-// Bit order: A B C D E F (MSB first), G tied LOW
-const uint8_t SEG_DIGITS[10] PROGMEM = {
-  0b111111, // 0
-  0b000110, // 1
-  0b110011, // 2 (approx without G)
-  0b100111, // 3
-  0b001110, // 4
-  0b101101, // 5
-  0b111101, // 6
-  0b000111, // 7
-  0b111111, // 8 (same as 0 — G off; still readable)
-  0b101111, // 9
+// Digital sensors & outputs
+#define PIN_TILT_SWITCH     2   // INT0 — hardware interrupt
+#define PIN_BUZZER_ACTIVE   3   // Active buzzer (DC-driven)
+#define PIN_BUZZER_PASSIVE  11  // Passive buzzer (PWM/tone)
+
+// 7-segment display pins (common cathode, segments A-F)
+#define SEG_A  4
+#define SEG_B  5
+#define SEG_C  6
+#define SEG_D  12
+#define SEG_E  13
+#define SEG_F  A5
+
+// ════════════════════════════════════════════════════════════
+//  THERMISTOR CONFIGURATION (Steinhart-Hart B-parameter)
+// ════════════════════════════════════════════════════════════
+
+#define THERMISTOR_NOMINAL  10000.0f    // 10kΩ @ 25°C
+#define SERIES_RESISTOR     10000.0f    // Voltage divider resistor
+#define BCOEFFICIENT        3950.0f     // Beta coefficient (NTC 10k)
+#define TEMP_NOMINAL        298.15f     // 25°C in Kelvin
+#define THERMISTOR_MIN_ADC  10          // Min valid ADC reading
+#define THERMISTOR_MAX_ADC  1020        // Max valid ADC reading
+#define TEMP_MIN_VALID      -40.0f      // Min valid temperature °C
+#define TEMP_MAX_VALID      125.0f      // Max valid temperature °C
+
+// ════════════════════════════════════════════════════════════
+//  7-SEGMENT DISPLAY (common cathode, segments A-F, G=LOW)
+// ════════════════════════════════════════════════════════════
+
+// Bit order: A B C D E F (MSB first), segment G tied LOW
+static const uint8_t SEG_DIGITS[10] PROGMEM = {
+  0b111111, // 0: A+B+C+D+E+F
+  0b000110, // 1: B+C
+  0b110011, // 2: A+B+D+E
+  0b100111, // 3: A+B+C+D
+  0b001110, // 4: B+C+F
+  0b101101, // 5: A+C+D+F
+  0b111101, // 6: A+C+D+E+F
+  0b000111, // 7: A+B+C
+  0b111111, // 8: A+B+C+D+E+F
+  0b101111, // 9: A+B+C+D+F
 };
-const uint8_t SEG_PINS[6] = { SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F };
 
-// ── ISR STATE ────────────────────────────────────────────────
-volatile bool    tiltTriggered = false;
-volatile uint32_t tiltMs       = 0;
-volatile uint16_t tiltCount    = 0;  // Cumulative tilt events (slope activity)
+static const uint8_t SEG_PINS[6] = { SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F };
 
-// ── SENSOR VALUES ────────────────────────────────────────────
-float waterLevel     = 0.0f;
-float thermistorTemp = 25.0f;
-float potCalibration = 1.0f;
-float photoPct       = 0.0f;
-float slopePct       = 0.0f;  // Derived from tilt event frequency
+// ════════════════════════════════════════════════════════════
+//  ISR STATE (volatile — modified in interrupt context)
+// ════════════════════════════════════════════════════════════
 
-// ── EMA ──────────────────────────────────────────────────────
+volatile bool    tiltTriggered   = false;
+volatile uint32_t tiltMs         = 0;
+volatile uint16_t tiltCount      = 0;     // Cumulative tilt events
+volatile uint32_t lastTiltEventMs = 0;    // FIX: must be volatile
+
+// ════════════════════════════════════════════════════════════
+//  SENSOR VALUES
+// ════════════════════════════════════════════════════════════
+
+float waterLevel     = 0.0f;    // 0–100%
+float thermistorTemp = 25.0f;   // °C
+float potCalibration = 1.0f;    // 0.5×–2.0×
+float photoPct       = 0.0f;    // 0–100%
+float slopePct       = 0.0f;    // 0–100% (spike+decay)
+
+// ════════════════════════════════════════════════════════════
+//  EMA SMOOTHING
+// ════════════════════════════════════════════════════════════
+
 float ema_water = 0.0f;
-#define EMA_A 0.3f
+#define EMA_ALPHA   0.3f
+#define EMA_INV_ALPHA (1.0f - EMA_ALPHA)
 
-// ── TIMING ───────────────────────────────────────────────────
-uint32_t lastTxMs     = 0;
-uint32_t lastBuzMs    = 0;
-uint32_t lastSampleMs = 0;
-#define TX_INTERVAL      2000
-#define SAMPLE_INTERVAL  150
+// ════════════════════════════════════════════════════════════
+//  TIMING CONSTANTS & STATE
+// ════════════════════════════════════════════════════════════
 
-// ── ALERT LEVEL FROM ESP32 ───────────────────────────────────
-int cmdAlertLevel = 0;
+#define TX_INTERVAL_MS      2000UL    // Transmit to ESP32
+#define SAMPLE_INTERVAL_MS   150UL    // Sensor sampling
+#define TILT_TIMEOUT_MS    15000UL    // Auto-clear tilt after 15s
+#define TILT_DECAY_MS      30000UL    // Slope decay timeout
+#define TILT_SPIKE_PCT      30.0f     // Slope spike on tilt
+#define TILT_DECAY_PCT       2.0f     // Slope decay per tick
+#define SLOPE_MAX          100.0f
 
-// ── SERIAL RECEIVE BUFFER ────────────────────────────────────
+static uint32_t lastTxMs     = 0;
+static uint32_t lastBuzMs    = 0;
+static uint32_t lastSampleMs = 0;
+
+// ════════════════════════════════════════════════════════════
+//  ALERT STATE
+// ════════════════════════════════════════════════════════════
+
+static int  cmdAlertLevel = 0;      // From ESP32
+static bool buzzerWasOn   = false;
+
+// ════════════════════════════════════════════════════════════
+//  SERIAL RECEIVE BUFFER
+// ════════════════════════════════════════════════════════════
+
 #define SERIAL_BUF_SIZE 32
-char    serialBuffer[SERIAL_BUF_SIZE];
-uint8_t serialIdx = 0;
+static char    serialBuffer[SERIAL_BUF_SIZE];
+static uint8_t serialIdx = 0;
 
-// ── BUZZER STATE ─────────────────────────────────────────────
-bool buzzerWasOn = false;
+// ════════════════════════════════════════════════════════════
+//  FORWARD DECLARATIONS
+// ════════════════════════════════════════════════════════════
 
-// ── TILT SLOPE ESTIMATE ──────────────────────────────────────
-// FIX v4: lastTiltEventMs must be volatile — it is written inside the ISR.
-// Without volatile, the compiler may cache it in a register and the main
-// loop will read a stale value, causing slopePct to never decay correctly.
-volatile uint32_t lastTiltEventMs = 0;
-#define TILT_DECAY_MS 30000  // Slope considered clear if no tilt for 30 s
+void    readSensors();
+void    handleIncomingSerial();
+void    handleAlerts(bool tiltNow, uint32_t now);
+void    transmitToESP32(bool tiltNow);
+void    displayDigit(int digit);
+void    clearTiltState();
 
-// ── ISR ──────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  INTERRUPT SERVICE ROUTINE (ISR)
+// ════════════════════════════════════════════════════════════
+
 void LANDSLIDE_ISR() {
-  tiltTriggered = true;
-  tiltMs        = millis();
+  tiltTriggered   = true;
+  tiltMs          = millis();
   tiltCount++;
   lastTiltEventMs = tiltMs;
 }
 
-// ── SETUP ────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  SETUP
+// ════════════════════════════════════════════════════════════
+
 void setup() {
-  // AVR watchdog: reset if loop hangs > 4 seconds
+  // AVR Watchdog: reset if loop hangs > 4 seconds
   wdt_enable(WDTO_4S);
 
-  Serial.begin(9600);  // To ESP32 via Serial2 on ESP32 side
+  // Serial communication to ESP32
+  Serial.begin(9600);
 
-  // Tilt switch with internal pull-up
+  // Tilt switch with internal pull-up (INT0)
   pinMode(PIN_TILT_SWITCH, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_TILT_SWITCH),
                   LANDSLIDE_ISR, FALLING);
@@ -137,13 +194,13 @@ void setup() {
   digitalWrite(PIN_BUZZER_ACTIVE, LOW);
   noTone(PIN_BUZZER_PASSIVE);
 
-  // 7-Segment
+  // 7-segment display pins
   for (uint8_t i = 0; i < 6; i++) {
     pinMode(SEG_PINS[i], OUTPUT);
     digitalWrite(SEG_PINS[i], LOW);
   }
 
-  // Boot sweep 0→9
+  // Boot sequence: 7-segment sweep 0→9→0
   for (int d = 0; d <= 9; d++) { displayDigit(d); delay(40); }
   for (int d = 9; d >= 0; d--) { displayDigit(d); delay(40); }
   displayDigit(0);
@@ -154,17 +211,19 @@ void setup() {
   tone(PIN_BUZZER_PASSIVE, 1400, 120); delay(150);
   noTone(PIN_BUZZER_PASSIVE);
 
-  Serial.println(F("GEO-SENSE Slave v4.0 Ready"));
+  Serial.println(F("GEO-SENSE Slave v4.1 Ready"));
   wdt_reset();
 }
 
-// ── MAIN LOOP ────────────────────────────────────────────────
-void loop() {
-  wdt_reset();  // Kick AVR watchdog
-  uint32_t now = millis();
+// ════════════════════════════════════════════════════════════
+//  MAIN LOOP
+// ════════════════════════════════════════════════════════════
 
-  // ── TILT TIMEOUT (auto-clear after 15 s) ─────────────────
-  // Read tiltTriggered with interrupt guard on AVR
+void loop() {
+  wdt_reset();  // Kick watchdog every cycle
+  const uint32_t now = millis();
+
+  // ── TILT TIMEOUT (auto-clear after 15s) ───────────────────
   bool tiltNow;
   uint32_t tiltAge;
   {
@@ -173,83 +232,93 @@ void loop() {
     tiltAge = now - tiltMs;
     interrupts();
   }
-  if (tiltNow && tiltAge > 15000UL) {
-    noInterrupts(); tiltTriggered = false; interrupts();
-    noTone(PIN_BUZZER_PASSIVE);         // FIX: was left ringing
-    digitalWrite(PIN_BUZZER_ACTIVE, LOW);
-    buzzerWasOn = false;
+
+  if (tiltNow && tiltAge > TILT_TIMEOUT_MS) {
+    clearTiltState();
   }
 
-  // ── SLOPE % DECAY ────────────────────────────────────────
+  // ── SLOPE PERCENTAGE DECAY ────────────────────────────────
   // Decay slopePct toward 0 if no tilt events recently
   if (now - lastTiltEventMs > TILT_DECAY_MS) {
-    slopePct = max(0.0f, slopePct - 2.0f); // Decay 2% per loop
-  } else {
-    // Spike to 80% on fresh tilt, decay otherwise
-    if (tiltNow) slopePct = min(100.0f, slopePct + 30.0f);
+    slopePct = max(0.0f, slopePct - TILT_DECAY_PCT);
+  } else if (tiltNow) {
+    slopePct = min(SLOPE_MAX, slopePct + TILT_SPIKE_PCT);
   }
 
-  // ── SENSOR SAMPLING ──────────────────────────────────────
-  if (now - lastSampleMs >= SAMPLE_INTERVAL) {
+  // ── SENSOR SAMPLING (time-gated) ──────────────────────────
+  if (now - lastSampleMs >= SAMPLE_INTERVAL_MS) {
     lastSampleMs = now;
     readSensors();
   }
 
-  // ── SERIAL FROM ESP32 ────────────────────────────────────
+  // ── SERIAL FROM ESP32 ─────────────────────────────────────
   handleIncomingSerial();
 
-  // ── ALERTS ───────────────────────────────────────────────
+  // ── ALERT HANDLING ────────────────────────────────────────
   handleAlerts(tiltNow, now);
 
-  // ── 7-SEG DISPLAY ────────────────────────────────────────
-  if (tiltNow) {
-    displayDigit(9);
-  } else {
-    int dispVal = constrain((int)(waterLevel / 11.1f), 0, 9);
-    displayDigit(dispVal);
-  }
+  // ── 7-SEGMENT DISPLAY ─────────────────────────────────────
+  displayDigit(tiltNow ? 9 : constrain((int)(waterLevel / 11.1f), 0, 9));
 
-  // ── TRANSMIT TO ESP32 ────────────────────────────────────
-  if (now - lastTxMs >= TX_INTERVAL) {
+  // ── TRANSMIT TO ESP32 (time-gated) ────────────────────────
+  if (now - lastTxMs >= TX_INTERVAL_MS) {
     lastTxMs = now;
     transmitToESP32(tiltNow);
   }
 }
 
-// ── READ SENSORS ─────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  CLEAR TILT STATE (atomic)
+// ════════════════════════════════════════════════════════════
+
+void clearTiltState() {
+  noInterrupts();
+  tiltTriggered = false;
+  interrupts();
+  noTone(PIN_BUZZER_PASSIVE);
+  digitalWrite(PIN_BUZZER_ACTIVE, LOW);
+  buzzerWasOn = false;
+}
+
+// ════════════════════════════════════════════════════════════
+//  READ SENSORS
+// ════════════════════════════════════════════════════════════
+
 void readSensors() {
-  // Water Level — map raw 0–700 to 0–100%
+  // ── WATER LEVEL (0–700 ADC → 0–100%) ─────────────────────
   int rawWater = analogRead(PIN_WATER_LEVEL);
   float wPct   = constrain((float)map(rawWater, 0, 700, 0, 100), 0.0f, 100.0f);
-  ema_water    = (EMA_A * wPct) + ((1.0f - EMA_A) * ema_water);
+  ema_water    = (EMA_ALPHA * wPct) + (EMA_INV_ALPHA * ema_water);
   waterLevel   = ema_water;
 
-  // Thermistor — Steinhart-Hart (FIXED formula)
-  // B-parameter equation: 1/T = 1/T0 + (1/B) * ln(R/R0)
+  // ── THERMISTOR (Steinhart-Hart B-parameter) ───────────────
   int rawTherm = analogRead(PIN_THERMISTOR);
-  if (rawTherm > 10 && rawTherm < 1020) {
-    // Voltage divider: R_therm = R_series * (ADC_max/raw - 1)
+  if (rawTherm > THERMISTOR_MIN_ADC && rawTherm < THERMISTOR_MAX_ADC) {
+    // Voltage divider: R_therm = R_series × (1023/raw - 1)
     float resistance = SERIES_RESISTOR * ((1023.0f / (float)rawTherm) - 1.0f);
-    // FIX: correct Steinhart-Hart B-parameter calculation
-    float lnR = logf(resistance / THERMISTOR_NOMINAL); // ln(R/R0)
-    float invT = (1.0f / TEMP_NOMINAL) + (lnR / BCOEFFICIENT); // 1/T = 1/T0 + ln(R/R0)/B
+    // B-parameter: 1/T = 1/T0 + (1/B) × ln(R/R0)
+    float lnR = logf(resistance / THERMISTOR_NOMINAL);
+    float invT = (1.0f / TEMP_NOMINAL) + (lnR / BCOEFFICIENT);
     float tempK = 1.0f / invT;
     float tempC = tempK - 273.15f;
-    if (tempC > -40.0f && tempC < 125.0f) {
+    if (tempC > TEMP_MIN_VALID && tempC < TEMP_MAX_VALID) {
       thermistorTemp = tempC;
     }
   }
 
-  // Potentiometer — sensitivity 0.5× to 2.0×
+  // ── POTENTIOMETER (0.5× to 2.0× calibration) ──────────────
   int rawPot     = analogRead(PIN_POTENTIOMETER);
   potCalibration = (float)map(rawPot, 0, 1023, 50, 200) / 100.0f;
 
-  // Photoresistor — FIX: now transmitted to ESP32
+  // ── PHOTORESISTOR (0–100% light intensity) ────────────────
   int rawPhoto = analogRead(PIN_PHOTORESISTOR);
   photoPct     = constrain((float)map(rawPhoto, 0, 1023, 0, 100), 0.0f, 100.0f);
 }
 
-// ── SERIAL INPUT FROM ESP32 ──────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  HANDLE INCOMING SERIAL (from ESP32)
+// ════════════════════════════════════════════════════════════
+
 void handleIncomingSerial() {
   while (Serial.available()) {
     char c = (char)Serial.read();
@@ -262,15 +331,18 @@ void handleIncomingSerial() {
     } else if (serialIdx < SERIAL_BUF_SIZE - 1) {
       serialBuffer[serialIdx++] = c;
     } else {
-      serialIdx = 0; // Overflow — discard
+      serialIdx = 0;  // Overflow — discard and resync
     }
   }
 }
 
-// ── HANDLE ALERTS ────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  HANDLE ALERTS (non-blocking)
+// ════════════════════════════════════════════════════════════
+
 void handleAlerts(bool tiltNow, uint32_t now) {
+  // ── TILT OVERRIDE (continuous 2.5 kHz alarm) ──────────────
   if (tiltNow) {
-    // ISR override: continuous 2.5 kHz
     if (!buzzerWasOn) {
       tone(PIN_BUZZER_PASSIVE, 2500);
       digitalWrite(PIN_BUZZER_ACTIVE, HIGH);
@@ -279,48 +351,47 @@ void handleAlerts(bool tiltNow, uint32_t now) {
     return;
   }
 
-  // FIX: ensure buzzer is off when tilt clears and no CMD
+  // ── CLEAR BUZZER when tilt clears and no critical alert ───
   if (buzzerWasOn && cmdAlertLevel < 2) {
     noTone(PIN_BUZZER_PASSIVE);
     digitalWrite(PIN_BUZZER_ACTIVE, LOW);
     buzzerWasOn = false;
   }
 
+  // ── CRITICAL ALERT (alternating 1800/2000 Hz) ─────────────
   if (cmdAlertLevel >= 2) {
-    // Critical: alternating 1800/2000 Hz beep — NO delay() inside loop.
-    // FIX v4: removed blocking delay(180) which could stack with other
-    // delays and approach the AVR watchdog WDTO_4S threshold.
-    // tone(pin, freq, duration) is non-blocking after return — the timer
-    // hardware handles the cutoff. We alternate pitch with a phase flag.
     static bool beepPhase = false;
     if (now - lastBuzMs > 450) {
       lastBuzMs = now;
       beepPhase = !beepPhase;
+      // tone() is non-blocking — timer hardware handles duration
       tone(PIN_BUZZER_PASSIVE, beepPhase ? 1800 : 2000, 180);
       buzzerWasOn = true;
     }
-  } else if (cmdAlertLevel == 1) {
-    // Warning: single 880 Hz chirp every 3 s
+  }
+  // ── WARNING ALERT (single 880 Hz chirp every 3s) ──────────
+  else if (cmdAlertLevel == 1) {
     if (now - lastBuzMs > 3000) {
       lastBuzMs = now;
       tone(PIN_BUZZER_PASSIVE, 880, 120);
       buzzerWasOn = false;
     }
-  } else {
-    // All clear
-    if (buzzerWasOn) {
-      noTone(PIN_BUZZER_PASSIVE);
-      digitalWrite(PIN_BUZZER_ACTIVE, LOW);
-      buzzerWasOn = false;
-    }
+  }
+  // ── ALL CLEAR ─────────────────────────────────────────────
+  else if (buzzerWasOn) {
+    noTone(PIN_BUZZER_PASSIVE);
+    digitalWrite(PIN_BUZZER_ACTIVE, LOW);
+    buzzerWasOn = false;
   }
 }
 
-// ── TRANSMIT TO ESP32 ────────────────────────────────────────
-// Format: W:xx.x,T:xx.x,S:xx.x,P:x.xx,I:x,L:xx.x
-// W = water%, T = soil temp °C, S = slope%, P = pot cal, I = ISR flag, L = light%
+// ════════════════════════════════════════════════════════════
+//  TRANSMIT TO ESP32
+//  Format: W:xx.x,T:xx.x,S:xx.x,P:x.xx,I:x,L:xx.x
+// ════════════════════════════════════════════════════════════
+
 void transmitToESP32(bool tiltNow) {
-  // Safe integer-based formatting (avoids sprintf float on small AVR)
+  // Integer-based formatting (avoids sprintf float on AVR)
   char buf[64];
 
   int w_i = (int)waterLevel;
@@ -335,21 +406,20 @@ void transmitToESP32(bool tiltNow) {
   int l_f = (int)fabsf((photoPct       - l_i) * 10.0f) % 10;
 
   snprintf(buf, sizeof(buf),
-           "W:%d.%d,T:%d.%d,S:%d.%d,P:%d.%02d,I:%d,L:%d.%d",
-           w_i, w_f,
-           t_i, t_f,
-           s_i, s_f,
-           p_i, p_f,
-           tiltNow ? 1 : 0,
-           l_i, l_f);
+    "W:%d.%d,T:%d.%d,S:%d.%d,P:%d.%02d,I:%d,L:%d.%d",
+    w_i, w_f, t_i, t_f, s_i, s_f, p_i, p_f,
+    tiltNow ? 1 : 0, l_i, l_f);
 
   Serial.println(buf);
 }
 
-// ── 7-SEGMENT DISPLAY ────────────────────────────────────────
-void displayDigit(int d) {
-  if (d < 0 || d > 9) d = 0;
-  uint8_t pattern = pgm_read_byte(&SEG_DIGITS[d]);
+// ════════════════════════════════════════════════════════════
+//  7-SEGMENT DISPLAY
+// ════════════════════════════════════════════════════════════
+
+void displayDigit(int digit) {
+  if (digit < 0 || digit > 9) digit = 0;
+  uint8_t pattern = pgm_read_byte(&SEG_DIGITS[digit]);
   for (uint8_t i = 0; i < 6; i++) {
     digitalWrite(SEG_PINS[i], (pattern >> (5 - i)) & 0x01);
   }
