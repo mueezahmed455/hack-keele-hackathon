@@ -21,7 +21,7 @@
 #include <esp_task_wdt.h>
 
 // ── CONFIG ───────────────────────────────────────────────────
-const char* AP_SSID = "GeoSense-v5-Mesh";
+const char* AP_SSID = "GeoSense-v5-Mesh-2";
 const char* AP_PASSWORD = "geosense2024";
 
 #define PIN_SDA 21
@@ -243,7 +243,18 @@ void handleCtrl() {
 // ── SETUP ────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200); Serial2.begin(9600, SERIAL_8N1, SLAVE_RX, SLAVE_TX);
-  esp_task_wdt_init(15, true); esp_task_wdt_add(NULL); Wire.begin(PIN_SDA, PIN_SCL);
+
+// fix for wdt error
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = 10000,      // 10 seconds
+    .idle_core_mask = 0,      // watch both cores (0 = both)
+    .trigger_panic = true
+  };
+
+  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_add(NULL);
+  Wire.begin(PIN_SDA, PIN_SCL);
+
   pinMode(PIN_TRIG, OUTPUT); pinMode(PIN_RELAY, OUTPUT); digitalWrite(PIN_RELAY, HIGH);
   if(oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { oled.clearDisplay(); oled.display(); }
   dht.begin(); servo.attach(PIN_SERVO); servo.write(0);
