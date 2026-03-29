@@ -3,7 +3,7 @@ import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import DashboardLayout from "./layouts/DashboardLayout";
 
-function App() {
+export default function App() {
   return (
     <BrowserRouter>
       <DashboardLayout>
@@ -15,5 +15,3 @@ function App() {
     </BrowserRouter>
   );
 }
-
-export default App;
