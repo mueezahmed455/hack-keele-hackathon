@@ -138,7 +138,7 @@ void setup() {
   }
 
   // Initialize OLED (optional, can be removed if not used)
-  //initOLED();
+  // initOLED();
   Wire.begin();
 
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
