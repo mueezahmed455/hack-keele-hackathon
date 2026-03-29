@@ -109,18 +109,8 @@ void LANDSLIDE_ISR() {
 }
 
 // ── SSD1306 OLED INITIALIZATION ───────────────────────────────
-void initOLED() {
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    while (true); // Don't proceed, loop forever
-  }
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0,0);
-  display.println("Hello!");
-  display.display();
-}
+//void initOLED() {
+//}
 
 
 
@@ -148,7 +138,17 @@ void setup() {
   }
 
   // Initialize OLED (optional, can be removed if not used)
-  initOLED();
+  //initOLED();
+  Wire.begin();
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0,0);
+  display.println("Hello!");
+  display.display();
 
   // Boot animation
   for (int d = 0; d <= 9; d++) { displayDigit(d); delay(80); }
