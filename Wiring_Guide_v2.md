@@ -1,239 +1,994 @@
 # GEO-SENSE AFRICA v2.0 — COMPLETE WIRING GUIDE
-## ESP32 Master + Arduino Uno Slave + Both Kits
+## ESP32 Master + Arduino Uno Slave | Dual-Board Multi-Hazard Early Warning System
+
+**Version:** 2.0 (Updated with corrected pin assignments)  
+**Last Updated:** March 2026  
+**Difficulty:** Intermediate  
+**Estimated Time:** 2-3 hours
 
 ---
 
-## SYSTEM ARCHITECTURE
+## 📋 TABLE OF CONTENTS
+
+1. [System Overview](#system-overview)
+2. [Components Checklist](#components-checklist)
+3. [Tools Required](#tools-required)
+4. [ESP32 Master Wiring](#part-a--esp32-master-wiring)
+5. [Arduino Slave Wiring](#part-b--arduino-uno-slave-wiring)
+6. [Inter-Board Connection](#part-c--inter-board-communication)
+7. [Power Distribution](#part-d--power-distribution)
+8. [Physical Layout](#physical-station-layout)
+9. [Step-by-Step Assembly](#step-by-step-assembly-guide)
+10. [Testing & Verification](#testing--verification)
+11. [Troubleshooting](#troubleshooting)
+
+---
+
+## 🔍 SYSTEM OVERVIEW
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    GEO-SENSE AFRICA v2.0                    │
-│                                                             │
-│  ┌──────────────────┐     Serial      ┌──────────────────┐ │
-│  │    ESP32 MASTER  │◄───TX/RX───────►│  ARDUINO SLAVE   │ │
-│  │                  │                 │                  │ │
-│  │ • WiFi Dashboard │                 │ • Water Level    │ │
-│  │ • OLED Display   │                 │ • Thermistor     │ │
-│  │ • LCD 1602       │                 │ • Potentiometer  │ │
-│  │ • HC-SR04 Flood  │                 │ • Tilt Switch    │ │
-│  │ • PIR Motion     │                 │ • 7-Seg Display  │ │
-│  │ • SG90 Servo     │                 │ • Active Buzzer  │ │
-│  │ • Relay Module   │                 │ • Passive Buzzer │ │
-│  │ • Dot Matrix     │                 │ • Photoresistor  │ │
-│  │ • DHT11          │                 │                  │ │
-│  │ • Soil Sensor    │                 │                  │ │
-│  │ • Obstacle IR    │                 │                  │ │
-│  │ • 4x LEDs        │                 │                  │ │
-│  └──────────────────┘                 └──────────────────┘ │
-│           │                                                  │
-│      WiFi AP ──► Phone/Laptop ──► http://192.168.4.1        │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         GEO-SENSE AFRICA v2.0                               │
+│                 Dual-Board Multi-Hazard Early Warning System                │
+│                                                                             │
+│   ┌─────────────────────────┐         ┌─────────────────────────┐          │
+│   │    ESP32 MASTER NODE    │         │   ARDUINO UNO SLAVE     │          │
+│   │  ┌───────────────────┐  │         │  ┌───────────────────┐  │          │
+│   │  │ WiFi Web Server   │  │         │  │ Water Level       │  │          │
+│   │  │ OLED 128x64 I2C   │  │         │  │ Thermistor        │  │          │
+│   │  │ LCD 1602 I2C      │  │         │  │ Tilt Switch (INT) │  │          │
+│   │  │ Dot Matrix 8x8    │  │         │  │ 7-Segment Display │  │          │
+│   │  │ DHT11 (Air T/H)   │  │         │  │ Active Buzzer     │  │          │
+│   │  │ HC-SR04 (Flood)   │  │         │  │ Passive Buzzer    │  │          │
+│   │  │ PIR Motion        │  │         │  │ Photoresistor     │  │          │
+│   │  │ Soil Moisture     │  │         │  │ Potentiometer     │  │          │
+│   │  │ SG90 Servo        │  │         │  │                   │  │          │
+│   │  │ Relay (Siren)     │  │         │  │                   │  │          │
+│   │  │ 4x Status LEDs    │  │         │  │                   │  │          │
+│   │  │ Joystick UI       │  │         │  │                   │  │          │
+│   │  │ Touch Sensor      │  │         │  │                   │  │          │
+│   │  │ Obstacle IR       │  │         │  │                   │  │          │
+│   │  └───────────────────┘  │         │  └───────────────────┘  │          │
+│   └───────────┬─────────────┘         └───────────┬─────────────┘          │
+│               │                                   │                         │
+│               └───────── Serial2 (UART) ──────────┘                         │
+│                    TX2 (GPIO17) ◄──► RX (D0)                                │
+│                    RX2 (GPIO16) ◄──► TX (D1)                                │
+│                         GND ────────── GND (COMMON)                         │
+│                                                                             │
+│   WiFi Access Point: "GeoSense-Africa" | Password: "geosense2024"           │
+│   Dashboard URL: http://192.168.4.1                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 📦 COMPONENTS CHECKLIST
+
+### Main Boards
+| Item | Quantity | Notes |
+|------|----------|-------|
+| ESP32 Dev Module (DOIT ESP32 DEVKIT V1) | 1 | 30-pin or 36-pin version |
+| Arduino Uno R3 (or compatible) | 1 | ATmega328P |
+
+### Displays
+| Item | Quantity | I2C Address | Notes |
+|------|----------|-------------|-------|
+| OLED 128x64 SSD1306 | 1 | 0x3C | 4-pin I2C (VCC, GND, SDA, SCL) |
+| LCD 1602 with I2C backpack | 1 | 0x27 | 4-pin I2C (VCC, GND, SDA, SCL) |
+| 7-Segment Display (common cathode) | 1 | N/A | Single digit, 7 pins |
+| MAX7219 8x8 Dot Matrix | 1 | N/A | 4-pin SPI (VCC, GND, DIN, CLK, CS) |
+
+### Sensors - ESP32 Side
+| Item | Quantity | Notes |
+|------|----------|-------|
+| DHT11 Temperature/Humidity | 1 | 3-pin or 4-pin |
+| HC-SR04 Ultrasonic | 1 | For flood distance |
+| HC-SR501 PIR Motion | 1 | 3-pin |
+| Capacitive Soil Moisture v1.2 | 1 | 3-pin (analog output) |
+| IR Obstacle Avoidance | 1 | 3-pin (digital output) |
+| TTP223B Touch Sensor | 1 | 3-pin |
+| KY-023 Joystick Module | 1 | 5-pin (VCC, GND, VRx, VRy, SW) |
+
+### Sensors - Arduino Side
+| Item | Quantity | Notes |
+|------|----------|-------|
+| Water Level Sensor | 1 | Analog output |
+| Thermistor 10k NTC | 1 | With 10k resistor |
+| Photoresistor (LDR) | 1 | With 10k resistor |
+| Potentiometer 10k | 1 | For sensitivity calibration |
+| Tilt Switch SW-520D | 1 | Digital (open/closed) |
+
+### Outputs
+| Item | Quantity | Notes |
+|------|----------|-------|
+| SG90 Micro Servo | 1 | 3-pin (brown=GND, red=5V, orange=SIG) |
+| 1-Channel Relay Module | 1 | Active LOW trigger |
+| Active Buzzer 5V | 1 | 2-pin (polarized) |
+| Passive Buzzer 5V | 1 | 2-pin (non-polarized) |
+| LED 5mm Green | 1 | Status indicator |
+| LED 5mm Blue | 1 | Flood indicator |
+| LED 5mm Yellow | 1 | Drought indicator |
+| LED 5mm Red | 1 | Critical alert |
+
+### Miscellaneous
+| Item | Quantity | Notes |
+|------|----------|-------|
+| Resistors 220Ω | 8 | For LEDs and 7-segment (red-red-brown-gold) |
+| Resistors 1kΩ | 4 | Voltage dividers (brown-black-red-gold) |
+| Resistors 2kΩ | 2 | Voltage dividers (red-black-red-gold) |
+| Resistors 10kΩ | 4 | Pull-ups (brown-black-orange-gold) |
+| Breadboard 400-point | 2 | For component mounting |
+| Jumper Wires M-M | 40 | Assorted colors |
+| Jumper Wires M-F | 20 | For sensor connections |
+| Jumper Wires F-F | 10 | For I2C bus |
+| USB Cable Micro-USB | 2 | For ESP32 and Arduino |
+| External 5V 2A Supply | 1 | Optional, for servo stability |
+
+---
+
+## 🛠️ TOOLS REQUIRED
+
+- **Soldering iron** (for 7-segment resistor connections)
+- **Wire strippers/cutters**
+- **Multimeter** (for continuity and voltage checks)
+- **Small Phillips screwdriver** (for terminal blocks)
+- **Tweezers** (for small components)
+- **Hot glue gun** (for securing components)
+- **Cardboard/foam board** (for physical layout base)
 
 ---
 
 ## PART A — ESP32 MASTER WIRING
 
-### A1 — I2C BUS (OLED + LCD share same bus)
-```
-ESP32 GPIO21 (SDA) ──► OLED SDA  AND  LCD SDA
-ESP32 GPIO22 (SCL) ──► OLED SCL  AND  LCD SCL
-OLED VCC            ──► 3.3V
-OLED GND            ──► GND
-LCD  VCC            ──► 5V  (LCD needs 5V, OLED 3.3V — both on same I2C is fine)
-LCD  GND            ──► GND
-```
-**IMPORTANT:** If OLED and LCD share I2C, they need different addresses:
-- OLED default: 0x3C
-- LCD default:  0x27
-- If they clash, change LCD address jumper (solder A0/A1/A2 pads)
+### Pin Reference Table (Quick Lookup)
 
-### A2 — DHT11 (on ESP32)
-```
-DHT11 Pin 1 (VCC)  ──► 3.3V
-DHT11 Pin 2 (DATA) ──► ESP32 GPIO4  + 10kΩ pull-up to 3.3V
-DHT11 Pin 4 (GND)  ──► GND
-```
+| GPIO | Function | Type | Notes |
+|------|----------|------|-------|
+| GPIO21 | I2C SDA | Output | Shared with LCD/OLED |
+| GPIO22 | I2C SCL | Output | Shared with LCD/OLED |
+| GPIO4 | DHT11 DATA | Digital | 10k pull-up required |
+| GPIO5 | HC-SR04 TRIG | Output | |
+| GPIO18 | HC-SR04 ECHO | Input | **Voltage divider required** |
+| GPIO19 | PIR OUT | Input | |
+| GPIO13 | Servo PWM | Output | |
+| GPIO12 | Relay IN | Output | Active LOW |
+| GPIO14 | Touch SIG | Input | |
+| GPIO34 | Joystick VRx | ADC | Input only |
+| GPIO35 | Joystick VRy | ADC | Input only |
+| GPIO32 | Joystick SW | Input | 10k pull-up |
+| GPIO23 | Dot Matrix DIN | SPI MOSI | |
+| GPIO26 | Dot Matrix CLK | SPI SCK | **Updated from GPIO18** |
+| GPIO15 | Dot Matrix CS | SPI SS | |
+| GPIO25 | Green LED | Output | Via 220Ω |
+| GPIO2 | Blue LED | Output | Via 220Ω (**Updated from GPIO26**) |
+| GPIO27 | Yellow LED | Output | Via 220Ω |
+| GPIO33 | Red LED | Output | Via 220Ω |
+| GPIO36 | Soil Signal | ADC | Input only |
+| GPIO39 | Obstacle OUT | ADC | Input only |
+| GPIO16 | Serial2 RX | Input | From Arduino TX (via divider) |
+| GPIO17 | Serial2 TX | Output | To Arduino RX |
 
-### A3 — HC-SR04 Ultrasound (Flood Distance)
-```
-HC-SR04 VCC   ──► 5V
-HC-SR04 GND   ──► GND
-HC-SR04 TRIG  ──► ESP32 GPIO5
-HC-SR04 ECHO  ──► Voltage divider ──► ESP32 GPIO18
-```
-**VOLTAGE DIVIDER for ECHO (5V→3.3V):**
-```
-ECHO ──► 1kΩ ──► GPIO18
-                    │
-                   2kΩ
-                    │
-                   GND
-```
-Use 1kΩ + 2kΩ from your resistor kit (brown-black-red and red-black-red).
+---
 
-### A4 — HC-SR501 PIR Motion Sensor
-```
-PIR VCC  ──► 5V
-PIR GND  ──► GND
-PIR OUT  ──► ESP32 GPIO19
-```
-Adjust the two trim pots on the PIR:
-- Left pot:  sensitivity (turn clockwise = more sensitive)
-- Right pot: time delay (turn anticlockwise = shortest delay ~3s)
+### A1 — I2C DISPLAY BUS (OLED + LCD)
 
-### A5 — SG90 Servo Motor
-```
-Servo Brown  (GND)   ──► GND
-Servo Red    (5V)    ──► 5V
-Servo Orange (Signal)──► ESP32 GPIO13
-```
-Servo positions used by code:
-- 0°   = ALL CLEAR (flag down)
-- 90°  = CAUTION
-- 135° = WARNING
-- 180° = CRITICAL / EVACUATE (flag fully raised)
+**Both displays share the same I2C bus but have different addresses.**
 
-### A6 — 1-Way Relay Module
 ```
-Relay VCC  ──► 5V
-Relay GND  ──► GND
-Relay IN   ──► ESP32 GPIO12  (LOW = relay fires)
-```
-Connect your external siren or warning lamp to the relay's:
-- COM (common) + NO (normally open) terminals
-The relay fires when Risk Index ≥ 7 for 3+ consecutive readings.
-
-### A7 — 8x8 Red Dot Matrix (SPI)
-```
-Matrix VCC  ──► 5V
-Matrix GND  ──► GND
-Matrix DIN  ──► ESP32 GPIO23 (MOSI)
-Matrix CLK  ──► ESP32 GPIO18 (SCK)
-Matrix CS   ──► ESP32 GPIO15
-```
-**NOTE:** GPIO18 is shared with HC-SR04 ECHO in the default mapping.
-If you get conflicts, move the dot matrix CLK to GPIO26 and update PIN_DM_CLK.
-
-### A8 — TTP223B Touch Sensor
-```
-Touch VCC ──► 3.3V
-Touch GND ──► GND
-Touch SIG ──► ESP32 GPIO14
-```
-Touch = manual alert acknowledge (silences buzzer + relay for 60s).
-
-### A9 — Joystick Module
-```
-Joystick VCC  ──► 3.3V
-Joystick GND  ──► GND
-Joystick VRx  ──► ESP32 GPIO34 (ADC only)
-Joystick VRy  ──► ESP32 GPIO35 (ADC only)
-Joystick SW   ──► ESP32 GPIO32 + 10kΩ pull-up to 3.3V
-```
-Push LEFT/RIGHT to cycle OLED display pages:
-Page 0: Risk Index + waveform
-Page 1: Flood data
-Page 2: Drought data
-Page 3: System info + WiFi
-
-### A10 — Soil Humidity Sensor (on ESP32)
-```
-Soil VCC    ──► 3.3V  (use 3.3V not 5V for ESP32 ADC safety)
-Soil GND    ──► GND
-Soil Signal ──► ESP32 GPIO36 (ADC1 — input only pin)
+┌─────────────────────────────────────────────────────────────────┐
+│                        I2C BUS WIRING                           │
+│                                                                 │
+│   ESP32              OLED 0x3C              LCD 0x27           │
+│   ┌─────┐           ┌──────────┐          ┌──────────┐        │
+│   │GPIO21├─SDA──────┤SDA       │──────────┤SDA       │        │
+│   │GPIO22├─SCL──────┤SCL       │──────────┤SCL       │        │
+│   │ 3.3V├─VCC───────┤VCC       │          │VCC       │◄──5V   │
+│   │  GND├─GND───────┤GND       │──────────┤GND       │        │
+│   └─────┘           └──────────┘          └──────────┘        │
+│                                                                 │
+│   NOTE: OLED uses 3.3V, LCD uses 5V (both OK on same I2C)      │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### A11 — Obstacle Avoidance Module (on ESP32)
+**Step-by-Step:**
+
+1. Connect ESP32 GPIO21 to OLED SDA pin
+2. Connect ESP32 GPIO22 to OLED SCL pin
+3. Connect ESP32 3.3V to OLED VCC pin
+4. Connect ESP32 GND to OLED GND pin
+5. Connect OLED SDA to LCD SDA (daisy-chain)
+6. Connect OLED SCL to LCD SCL (daisy-chain)
+7. Connect Arduino 5V to LCD VCC
+8. Connect LCD GND to common ground
+
+**⚠️ IMPORTANT:** Verify I2C addresses:
+- OLED default: **0x3C**
+- LCD default: **0x27** (some use 0x3F)
+- If displays don't work, run I2C scanner sketch to verify addresses
+
+---
+
+### A2 — DHT11 TEMPERATURE/HUMIDITY SENSOR
+
 ```
-Obstacle VCC ──► 3.3V
-Obstacle GND ──► GND
-Obstacle OUT ──► ESP32 GPIO39 (ADC1 — input only)
+┌─────────────────────────────────────────────────────────────────┐
+│                      DHT11 WIRING                               │
+│                                                                 │
+│   DHT11 (4-pin view, front)        ESP32                       │
+│   ┌─────────────────┐                                          │
+│   │  1  2  3  4     │                                          │
+│   │  │  │  │  │     │                                          │
+│   │  │  └──┼──┘     │                                          │
+│   │  │     │        │                                          │
+│   │  │     └────────┼──► GPIO4 (DATA)                          │
+│   │  │              │                                          │
+│   │  └──────────────┼──► 3.3V (Pin 1)                          │
+│   │                 │                                          │
+│   └─────────────────┼──► GND (Pin 4)                           │
+│                     │                                          │
+│   10kΩ Resistor:    │                                          │
+│   GPIO4 ──┬──10kΩ──┬──► 3.3V                                   │
+│           │        │                                          │
+│          DATA     VCC                                         │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### A12 — Indicator LEDs (4 hazard channels)
+**Pin Identification (DHT11 facing you, grille forward):**
+- Pin 1 (left): VCC (3.3V)
+- Pin 2: DATA (GPIO4)
+- Pin 3: NC (not connected)
+- Pin 4 (right): GND
+
+**Steps:**
+1. Connect DHT11 Pin 1 to ESP32 3.3V
+2. Connect DHT11 Pin 2 to ESP32 GPIO4
+3. Connect DHT11 Pin 4 to ESP32 GND
+4. Solder 10kΩ resistor between Pin 1 (VCC) and Pin 2 (DATA)
+
+---
+
+### A3 — HC-SR04 ULTRASONIC FLOOD SENSOR
+
 ```
-ESP32 GPIO25 ──► 220Ω ──► GREEN LED  anode  ──► GND   (All Clear)
-ESP32 GPIO26 ──► 220Ω ──► BLUE  LED  anode  ──► GND   (Flood)
-ESP32 GPIO27 ──► 220Ω ──► YELLOW LED anode  ──► GND   (Drought)
-ESP32 GPIO33 ──► 220Ω ──► RED   LED  anode  ──► GND   (Landslide/Critical)
+┌─────────────────────────────────────────────────────────────────┐
+│                   HC-SR04 WIRING (with voltage divider)         │
+│                                                                 │
+│   HC-SR04                    ESP32                              │
+│   ┌──────────────┐                                              │
+│   │  +5V   TRIG  │──► GPIO5                                     │
+│   │              │                                              │
+│   │  ECHO  GND   │                                              │
+│   │   │          │                                              │
+│   │   └─────┬────┘                                              │
+│   │         │                                                   │
+│   │      ┌──┴──┐                                                │
+│   │      │ 1kΩ │ (brown-black-red-gold)                         │
+│   │      └──┬──┘                                                │
+│   │         ├──────────────► GPIO18 (ECHO input)                │
+│   │      ┌──┴──┐                                                │
+│   │      │ 2kΩ │ (red-black-red-gold)                           │
+│   │      └──┬──┘                                                │
+│   │         │                                                   │
+│   └─────────┴──────────────► GND                                │
+│                                                                 │
+│   VCC: Connect to 5V (Arduino or external)                      │
+└─────────────────────────────────────────────────────────────────┘
 ```
-Use the 220Ω resistors from your resistor pack (red-red-brown-gold).
+
+**⚠️ CRITICAL:** The HC-SR04 ECHO pin outputs 5V logic, but ESP32 GPIO is 3.3V max!
+**You MUST use a voltage divider or you will damage the ESP32.**
+
+**Voltage Divider Calculation:**
+```
+V_out = V_in × (R2 / (R1 + R2))
+V_out = 5V × (2kΩ / (1kΩ + 2kΩ)) = 5V × 0.667 = 3.33V ✓
+```
+
+**Steps:**
+1. Connect HC-SR04 VCC to 5V
+2. Connect HC-SR04 GND to GND
+3. Connect HC-SR04 TRIG to ESP32 GPIO5
+4. Connect HC-SR04 ECHO to 1kΩ resistor
+5. Connect other end of 1kΩ to ESP32 GPIO18
+6. Connect 2kΩ resistor from GPIO18 junction to GND
+
+---
+
+### A4 — HC-SR501 PIR MOTION SENSOR
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      PIR SENSOR WIRING                          │
+│                                                                 │
+│   HC-SR501 (bottom view)         ESP32                          │
+│   ┌──────────────────┐                                          │
+│   │   ┌─────────┐    │                                          │
+│   │   │  LENS   │    │                                          │
+│   │   └─────────┘    │                                          │
+│   │   ○ ○ ○          │                                          │
+│   │   │ │ │          │                                          │
+│   │   │ │ └──────────┼──► GND                                   │
+│   │   │ └────────────┼──► OUT ──► GPIO19                        │
+│   │   └──────────────┼──► VCC ──► 5V                            │
+│   │                  │                                          │
+│   │  [Trim Pots]     │                                          │
+│   │   Left: Sensitivity  (CW = more sensitive)                  │
+│   │   Right: Time delay (CCW = shorter ~3s)                     │
+│   └──────────────────┘                                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect PIR VCC to 5V
+2. Connect PIR GND to GND
+3. Connect PIR OUT to ESP32 GPIO19
+4. Adjust trim pots:
+   - **Left pot:** Turn fully clockwise for max sensitivity
+   - **Right pot:** Turn fully counter-clockwise for minimum delay
+
+---
+
+### A5 — SG90 SERVO MOTOR (WARNING FLAG)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      SERVO WIRING                               │
+│                                                                 │
+│   SG90 Servo (female connector)    ESP32/Power                   │
+│   ┌───────────────────┐                                         │
+│   │ Brown  Red  Orange│                                         │
+│   │   │    │     │    │                                         │
+│   │   │    │     └────┼────► GPIO13 (PWM)                       │
+│   │   │    │          │                                         │
+│   │   │    └─────────┼────► 5V (separate supply recommended)    │
+│   │   │              │                                         │
+│   │   └──────────────┼────► GND (common with ESP32)             │
+│   │                  │                                         │
+│   └──────────────────┘                                         │
+│                                                                 │
+│   SERVO POSITIONS:                                              │
+│   0°   = All Clear (flag down)                                  │
+│   90°  = Caution (flag mid-position)                            │
+│   180° = Critical/Evacuate (flag fully raised)                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**⚠️ IMPORTANT:** Servos can draw 500mA+ under load. Use a separate 5V supply if possible, or power from Arduino's 5V pin (not ESP32's 3.3V!).
+
+**Steps:**
+1. Connect servo Brown wire to GND
+2. Connect servo Red wire to 5V
+3. Connect servo Orange wire to ESP32 GPIO13
+
+---
+
+### A6 — 1-CHANNEL RELAY MODULE (SIREN CONTROL)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    RELAY MODULE WIRING                          │
+│                                                                 │
+│   Relay Module                   ESP32                          │
+│   ┌──────────────────┐                                          │
+│   │  VCC   IN   GND  │                                          │
+│   │   │    │     │   │                                          │
+│   │   │    │     └───┼────► GND                                 │
+│   │   │    └─────────┼────► GPIO12                              │
+│   │   └──────────────┼────► 5V                                  │
+│   │                  │                                          │
+│   │  COM   NO   NC   │                                          │
+│   │   │    │     │   │                                          │
+│   │   └────┘     │   │                                          │
+│   │      │       │   │                                          │
+│   │      └───┬───┘   │                                          │
+│   │          │       │                                          │
+│   └──────────┼───────┘                                          │
+│              │                                                  │
+│         External Siren/Lamp                                     │
+│         (connect to COM + NO)                                   │
+│                                                                 │
+│   RELAY OPERATION:                                              │
+│   IN = LOW  → Relay ON  → Siren ACTIVE                          │
+│   IN = HIGH → Relay OFF → Siren OFF                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect Relay VCC to 5V
+2. Connect Relay GND to GND
+3. Connect Relay IN to ESP32 GPIO12
+4. Connect external siren/lamp to COM and NO terminals
+
+---
+
+### A7 — MAX7219 8x8 DOT MATRIX (SPI)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  DOT MATRIX WIRING (SPI)                        │
+│                                                                 │
+│   MAX7219 Module               ESP32                            │
+│   ┌──────────────────┐                                          │
+│   │  VCC   GND  DIN  │                                          │
+│   │   │    │     │   │                                          │
+│   │   │    │     └───┼────► GPIO23 (MOSI)                       │
+│   │   │    │         │                                          │
+│   │   │    └─────────┼────► GND                                 │
+│   │   └──────────────┼────► 5V                                  │
+│   │                  │                                          │
+│   │  CLK   CS        │                                          │
+│   │   │     │        │                                          │
+│   │   └─────┼────────┼────► GPIO15 (CS)                         │
+│   │         │        │                                          │
+│   └─────────┼────────┘                                          │
+│             │                                                   │
+│             └─────────────► GPIO26 (CLK)  [UPDATED PIN]         │
+│                                                                 │
+│   NOTE: CLK moved from GPIO18 to GPIO26 to avoid HC-SR04 conflict│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect Matrix VCC to 5V
+2. Connect Matrix GND to GND
+3. Connect Matrix DIN to ESP32 GPIO23
+4. Connect Matrix CLK to ESP32 GPIO26
+5. Connect Matrix CS to ESP32 GPIO15
+
+---
+
+### A8 — TTP223B TOUCH SENSOR (ALERT ACKNOWLEDGE)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TOUCH SENSOR WIRING                          │
+│                                                                 │
+│   TTP223B                      ESP32                            │
+│   ┌──────────────────┐                                          │
+│   │  VCC   I/O  GND  │                                          │
+│   │   │     │     │  │                                          │
+│   │   │     │     └──┼──► GND                                   │
+│   │   │     └────────┼──► GPIO14                                │
+│   │   └──────────────┼──► 3.3V                                  │
+│   │                  │                                          │
+│   │  [Touch Pad]     │                                          │
+│   │   Touch to acknowledge alerts                               │
+│   └──────────────────┘                                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect Touch VCC to 3.3V
+2. Connect Touch GND to GND
+3. Connect Touch I/O to ESP32 GPIO14
+
+---
+
+### A9 — KY-023 JOYSTICK MODULE (MENU NAVIGATION)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    JOYSTICK WIRING                              │
+│                                                                 │
+│   KY-023 Joystick              ESP32                            │
+│   ┌──────────────────┐                                          │
+│   │  VCC   GND  VRx  │                                          │
+│   │   │     │     │  │                                          │
+│   │   │     │     └──┼──► GPIO34 (ADC1)                         │
+│   │   │     │        │                                          │
+│   │   │     └────────┼──► GND                                   │
+│   │   └──────────────┼──► 3.3V                                  │
+│   │                  │                                          │
+│   │  VRy   SW        │                                          │
+│   │   │     │        │                                          │
+│   │   └─────┼────────┼──► GPIO35 (ADC1)                         │
+│   │         │        │                                          │
+│   └─────────┼────────┘                                          │
+│             │                                                   │
+│             └─────────────► GPIO32 + 10kΩ pull-up to 3.3V       │
+│                                                                 │
+│   JOYSTICK FUNCTIONS:                                           │
+│   X-axis (left/right): Cycle OLED menu pages                    │
+│   Y-axis (up/down):    Not used (reserved)                      │
+│   Push button:         Select/confirm (not used in v2.0)        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect Joystick VCC to 3.3V
+2. Connect Joystick GND to GND
+3. Connect Joystick VRx to ESP32 GPIO34
+4. Connect Joystick VRy to ESP32 GPIO35
+5. Connect Joystick SW to ESP32 GPIO32
+6. Add 10kΩ pull-up resistor from GPIO32 to 3.3V
+
+---
+
+### A10 — SOIL MOISTURE SENSOR (CAPACITIVE)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 SOIL MOISTURE WIRING                            │
+│                                                                 │
+│   Capacitive Soil Sensor         ESP32                          │
+│   ┌──────────────────┐                                          │
+│   │  VCC   GND  AOUT │                                          │
+│   │   │     │     │  │                                          │
+│   │   │     │     └──┼──► GPIO36 (ADC1)                         │
+│   │   │     └────────┼──► GND                                   │
+│   │   └──────────────┼──► 3.3V  (NOT 5V!)                       │
+│   │                  │                                          │
+│   │  [Probe]         │                                          │
+│   │   Insert into soil                                          │
+│   └──────────────────┘                                          │
+│                                                                 │
+│   ⚠️ WARNING: Use 3.3V NOT 5V! ESP32 ADC is 3.3V max.           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect Sensor VCC to ESP32 3.3V (NOT 5V!)
+2. Connect Sensor GND to GND
+3. Connect Sensor AOUT to ESP32 GPIO36
+
+---
+
+### A11 — IR OBSTACLE AVOIDANCE SENSOR (DEBRIS DETECT)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              OBSTACLE SENSOR WIRING                             │
+│                                                                 │
+│   IR Obstacle Module             ESP32                          │
+│   ┌──────────────────┐                                          │
+│   │  VCC   OUT  GND  │                                          │
+│   │   │     │     │  │                                          │
+│   │   │     │     └──┼──► GND                                   │
+│   │   │     └────────┼──► GPIO39 (ADC1)                         │
+│   │   └──────────────┼──► 3.3V                                  │
+│   │                  │                                          │
+│   │  [IR LED + Receiver]                                        │
+│   │   Detects floating debris                                   │
+│   └──────────────────┘                                          │
+│                                                                 │
+│   OUTPUT: LOW when obstacle detected                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect Obstacle VCC to 3.3V
+2. Connect Obstacle GND to GND
+3. Connect Obstacle OUT to ESP32 GPIO39
+
+---
+
+### A12 — STATUS LEDs (4 HAZARD CHANNELS)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    LED ARRAY WIRING                             │
+│                                                                 │
+│   ESP32              220Ω Resistors         LEDs                │
+│   ┌─────┐           ┌──────────┐          ┌────────┐           │
+│   │GPIO25├──────────┤ 220Ω     ├──────────┤ GREEN  │ GND       │
+│   │GPIO2 ├──────────┤ 220Ω     ├──────────┤ BLUE   │ GND       │
+│   │GPIO27├──────────┤ 220Ω     ├──────────┤ YELLOW │ GND       │
+│   │GPIO33├──────────┤ 220Ω     ├──────────┤ RED    │ GND       │
+│   └─────┘           └──────────┘          └────────┘           │
+│                                                                 │
+│   LED INDICATIONS:                                              │
+│   GREEN  = All Clear (Risk 0-3)                                 │
+│   YELLOW = Drought Warning (Risk 4-6)                           │
+│   RED    = Critical Alert (Risk 7-9)                            │
+│   BLUE   = Flood Detected (hazard type indicator)               │
+│                                                                 │
+│   LED Polarity: Long leg = Anode (+), Short leg = Cathode (-)   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Connect ESP32 GPIO25 to 220Ω resistor, then to GREEN LED anode
+2. Connect ESP32 GPIO2 to 220Ω resistor, then to BLUE LED anode
+3. Connect ESP32 GPIO27 to 220Ω resistor, then to YELLOW LED anode
+4. Connect ESP32 GPIO33 to 220Ω resistor, then to RED LED anode
+5. Connect all LED cathodes (short legs) to GND
 
 ---
 
 ## PART B — ARDUINO UNO SLAVE WIRING
 
-### B1 — Serial Link (ESP32 ↔ Arduino)
+### Pin Reference Table (Quick Lookup)
+
+| Pin | Function | Type | Notes |
+|-----|----------|------|-------|
+| A1 | Water Level | ADC | Analog sensor |
+| A2 | Thermistor | ADC | Voltage divider |
+| A3 | Photoresistor | ADC | Voltage divider |
+| A4 | Potentiometer | ADC | Calibration |
+| A5 | 7-Seg Segment F | Output | Via 220Ω |
+| D2 | Tilt Switch | Interrupt | FALLING edge |
+| D3 | Active Buzzer | Output | |
+| D4 | 7-Seg Segment A | Output | Via 220Ω |
+| D5 | 7-Seg Segment B | Output | Via 220Ω |
+| D6 | 7-Seg Segment C | Output | Via 220Ω |
+| D11 | Passive Buzzer | PWM | |
+| D12 | 7-Seg Segment D | Output | Via 220Ω |
+| D13 | 7-Seg Segment E | Output | Via 220Ω |
+| D0 | Serial TX | Output | To ESP32 (via divider) |
+| D1 | Serial RX | Input | From ESP32 |
+
+---
+
+### B1 — WATER LEVEL SENSOR
+
 ```
-Arduino TX (D1) ──► ESP32 GPIO16 (RX2)
-Arduino RX (D0) ──► ESP32 GPIO17 (TX2)
-Arduino GND     ──► ESP32 GND  (MUST share ground!)
-```
-**VOLTAGE WARNING:** Arduino TX is 5V, ESP32 RX is 3.3V max!
-Add a voltage divider:
-```
-Arduino TX ──► 1kΩ ──► ESP32 RX
-                          │
-                         2kΩ
-                          │
-                         GND
+┌─────────────────────────────────────────────────────────────────┐
+│                 WATER LEVEL SENSOR WIRING                       │
+│                                                                 │
+│   Water Level Sensor             Arduino Uno                    │
+│   ┌──────────────────┐                                          │
+│   │  VCC   GND  SIG  │                                          │
+│   │   │     │     │  │                                          │
+│   │   │     │     └──┼──► A1                                    │
+│   │   │     └────────┼──► GND                                   │
+│   │   └──────────────┼──► 5V                                    │
+│   │                  │                                          │
+│   │  [Probe]         │                                          │
+│   │   Immerse in water tray                                     │
+│   └──────────────────┘                                          │
+│                                                                 │
+│   OUTPUT: 0-700 (dry to submerged)                              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### B2 — Water Level Sensor
+**Steps:**
+1. Connect Water Sensor VCC to 5V
+2. Connect Water Sensor GND to GND
+3. Connect Water Sensor SIG to Arduino A1
+
+---
+
+### B2 — THERMISTOR (SOIL TEMPERATURE)
+
 ```
-Water Sensor VCC  ──► 5V
-Water Sensor GND  ──► GND
-Water Sensor S    ──► Arduino A1
+┌─────────────────────────────────────────────────────────────────┐
+│                   THERMISTOR WIRING                             │
+│                                                                 │
+│   Thermistor 10k NTC             Arduino Uno                    │
+│   ┌──────────────────┐                                          │
+│   │     ┌───┐        │                                          │
+│   │     │ ──┼────────┼──► 5V                                    │
+│   │     │   │        │                                          │
+│   │     │   ├────────┼──► A2                                    │
+│   │     │   │        │                                          │
+│   │     └───┼────────┼──► GND                                   │
+│   │         │        │                                          │
+│   │       10kΩ       │                                          │
+│   │         │        │                                          │
+│   └─────────┴────────┘                                          │
+│                                                                 │
+│   STEINHART-HART EQUATION (in code):                            │
+│   T = 1/(1/T0 + 1/B × ln(R/R0)) - 273.15                        │
+│   Where: T0=25°C, B=3950, R0=10kΩ                               │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### B3 — Thermistor (Soil Temperature)
+**Steps:**
+1. Connect thermistor leg 1 to 5V
+2. Connect thermistor leg 2 to Arduino A2
+3. Connect 10kΩ resistor from A2 to GND
+
+---
+
+### B3 — PHOTORESISTOR (AMBIENT LIGHT)
+
 ```
-Thermistor leg 1  ──► 5V
-Thermistor leg 2  ──► Arduino A2  AND  10kΩ to GND
+┌─────────────────────────────────────────────────────────────────┐
+│                  PHOTORESISTOR WIRING                           │
+│                                                                 │
+│   Photoresistor (LDR)            Arduino Uno                    │
+│   ┌──────────────────┐                                          │
+│   │     ┌───┐        │                                          │
+│   │     │ ──┼────────┼──► 5V                                    │
+│   │     │   │        │                                          │
+│   │     │   ├────────┼──► A3                                    │
+│   │     │   │        │                                          │
+│   │     └───┼────────┼──► GND                                   │
+│   │         │        │                                          │
+│   │       10kΩ       │                                          │
+│   │         │        │                                          │
+│   └─────────┴────────┘                                          │
+│                                                                 │
+│   OUTPUT: Higher value = brighter light                         │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### B4 — Photoresistor
+**Steps:**
+1. Connect photoresistor leg 1 to 5V
+2. Connect photoresistor leg 2 to Arduino A3
+3. Connect 10kΩ resistor from A3 to GND
+
+---
+
+### B4 — POTENTIOMETER (SENSITIVITY CALIBRATION)
+
 ```
-Photoresistor leg 1  ──► 5V
-Photoresistor leg 2  ──► Arduino A3  AND  10kΩ to GND
+┌─────────────────────────────────────────────────────────────────┐
+│                POTENTIOMETER WIRING                             │
+│                                                                 │
+│   10k Potentiometer              Arduino Uno                    │
+│   ┌──────────────────┐                                          │
+│   │  ○───────○───────○  │                                       │
+│   │  1       2       3  │                                       │
+│   │  │       │       │  │                                       │
+│   │  │       │       │  │                                       │
+│   │  │       └───────┼──► A4                                    │
+│   │  │               │                                          │
+│   │  └───────────────┼──► GND                                   │
+│   │                  │                                          │
+│   └──────────────────┼──► 5V                                    │
+│                                                                 │
+│   CALIBRATION RANGE: 0.5x to 2.0x sensitivity                   │
+│   Turn clockwise to increase sensitivity                        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### B5 — Potentiometer (Sensitivity Calibration)
+**Steps:**
+1. Connect Pot pin 1 (left) to GND
+2. Connect Pot pin 2 (center/wiper) to Arduino A4
+3. Connect Pot pin 3 (right) to 5V
+
+---
+
+### B5 — TILT SWITCH (LANDSLIDE DETECTOR)
+
 ```
-Pot pin 1 (left)  ──► GND
-Pot pin 2 (wiper) ──► Arduino A4
-Pot pin 3 (right) ──► 5V
+┌─────────────────────────────────────────────────────────────────┐
+│                   TILT SWITCH WIRING                            │
+│                                                                 │
+│   SW-520D Tilt Switch            Arduino Uno                    │
+│   ┌──────────────────┐                                          │
+│   │  ┌─────────┐     │                                          │
+│   │  │  ○ ○    │     │                                          │
+│   │  │  │ │    │     │                                          │
+│   │  │  │ └────┼─────┼──► GND                                   │
+│   │  │  │      │     │                                          │
+│   │  │  └──────┼─────┼──► D2 (INT0)                             │
+│   │  │         │     │                                          │
+│   │  └─────────┘     │                                          │
+│   │                  │                                          │
+│   │  [Mount at 15° angle]                                       │
+│   │   Triggers on slope change                                  │
+│   └──────────────────┘                                          │
+│                                                                 │
+│   INTERRUPT: FALLING edge (HIGH→LOW when tilted)                │
+│   Uses internal INPUT_PULLUP (no external resistor needed)      │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### B6 — Tilt Switch (MUST be D2 for hardware interrupt)
-```
-Tilt leg 1  ──► Arduino D2
-Tilt leg 2  ──► GND
-```
-No resistor needed — code uses INPUT_PULLUP.
+**Steps:**
+1. Connect Tilt Switch pin 1 to Arduino D2
+2. Connect Tilt Switch pin 2 to GND
+3. Mount on cardboard wedge at 15° angle
 
-### B7 — Active Buzzer
+---
+
+### B6 — ACTIVE BUZZER (ALARM)
+
 ```
-Buzzer + (long leg) ──► Arduino D3
-Buzzer - (short)    ──► GND
+┌─────────────────────────────────────────────────────────────────┐
+│                   ACTIVE BUZZER WIRING                          │
+│                                                                 │
+│   Active Buzzer 5V               Arduino Uno                    │
+│   ┌──────────────────┐                                          │
+│   │  +       -       │                                          │
+│   │  │       │       │                                          │
+│   │  │       └───────┼──► GND                                   │
+│   │  │               │                                          │
+│   │  └───────────────┼──► D3                                    │
+│   │                  │                                          │
+│   │  [Long leg = +]  │                                          │
+│   │   Continuous tone when HIGH                                  │
+│   └──────────────────┘                                          │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### B8 — Passive Buzzer
+**Steps:**
+1. Connect Buzzer + (long leg) to Arduino D3
+2. Connect Buzzer - (short leg) to GND
+
+---
+
+### B7 — PASSIVE BUZZER (TONE GENERATOR)
+
 ```
-Passive Buzzer +  ──► Arduino D11
-Passive Buzzer -  ──► GND
+┌─────────────────────────────────────────────────────────────────┐
+│                  PASSIVE BUZZER WIRING                          │
+│                                                                 │
+│   Passive Buzzer 5V              Arduino Uno                    │
+│   ┌──────────────────┐                                          │
+│   │  +       -       │                                          │
+│   │  │       │       │                                          │
+│   │  │       └───────┼──► GND                                   │
+│   │  │               │                                          │
+│   │  └───────────────┼──► D11 (PWM)                             │
+│   │                  │                                          │
+│   │   Requires tone() function                                   │
+│   │   Different frequencies for alert levels                    │
+│   └──────────────────┘                                          │
+│                                                                 │
+│   TONE PATTERNS:                                                │
+│   Tilt triggered: 2500 Hz continuous                            │
+│   Critical:       1800 Hz beep every 400ms                      │
+│   Caution:        880 Hz beep every 3s                          │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### B9 — 7-Segment Display (1 digit, common cathode)
+**Steps:**
+1. Connect Passive Buzzer + to Arduino D11
+2. Connect Passive Buzzer - to GND
+
+---
+
+### B8 — 7-SEGMENT DISPLAY (WATER LEVEL INDICATOR)
+
 ```
-Display pin a ──► 220Ω ──► Arduino D4
-Display pin b ──► 220Ω ──► Arduino D5
-Display pin c ──► 220Ω ──► Arduino D6
-Display pin d ──► 220Ω ──► Arduino D12
-Display pin e ──► 220Ω ──► Arduino D13
-Display pin f ──► 220Ω ──► Arduino A5
-Display GND   ──► Arduino GND  (common cathode — connect ALL GND pins)
+┌─────────────────────────────────────────────────────────────────┐
+│              7-SEGMENT DISPLAY WIRING                           │
+│                                                                 │
+│   Common Cathode 7-Segment       Arduino Uno                    │
+│   (view from front)                                             │
+│                                                                 │
+│         ┌───┐                                                   │
+│      f  │ a │  b                                                │
+│         │───│                                                   │
+│      e  │ g │  c     Segment  Arduino   Resistor                │
+│         │───│       ────────────────────────────                │
+│         │ d │         a ──────► D4 ──► 220Ω ──► pin a          │
+│         └───┘           b ──────► D5 ──► 220Ω ──► pin b        │
+│                           c ──────► D6 ──► 220Ω ──► pin c        │
+│   Pin Layout (bottom):    d ──────► D12 ─► 220Ω ──► pin d        │
+│   dp e d c b a g dp       e ──────► D13 ─► 220Ω ──► pin e        │
+│     │ │ │ │ │ │ │         f ──────► A5 ──► 220Ω ──► pin f        │
+│     └─┴─┴─┴─┴─┴─┴─┘       g ──────► GND (common cathode)        │
+│                                                                 │
+│   DISPLAY VALUE: Shows water level / 11.1 (0-9 scale)           │
+│   Shows "9" when tilt alarm triggered                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Identify 7-segment pins (use multimeter to find segments)
+2. Connect each segment (a-f) through 220Ω resistor to Arduino pins
+3. Connect common cathode (GND) to Arduino GND
+4. Segment g connects directly to GND (always on for digits 0-9)
+
+**Segment to Pin Mapping:**
+| Segment | Arduino Pin | Resistor |
+|---------|-------------|----------|
+| a | D4 | 220Ω |
+| b | D5 | 220Ω |
+| c | D6 | 220Ω |
+| d | D12 | 220Ω |
+| e | D13 | 220Ω |
+| f | A5 | 220Ω |
+| g | GND | Direct |
+| DP | NC | Not connected |
+
+---
+
+## PART C — INTER-BOARD COMMUNICATION
+
+### Serial Connection (ESP32 ↔ Arduino)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│           SERIAL COMMUNICATION WIRING                           │
+│                                                                 │
+│   Arduino Uno                    ESP32 Master                    │
+│   ┌──────────────────┐          ┌──────────────────┐           │
+│   │              D1  │──TX──────┤ GPIO16 (RX2)     │           │
+│   │              D0  │──RX──────┤ GPIO17 (TX2)     │           │
+│   │              GND │──────────┤ GND              │           │
+│   └──────────────────┘          └──────────────────┘           │
+│                                                                 │
+│   ⚠️ VOLTAGE DIVIDER REQUIRED (Arduino TX → ESP32 RX):         │
+│                                                                 │
+│   Arduino D1 (TX) ──┬── 1kΩ ──┬──► ESP32 GPIO16                 │
+│                     │         │                                 │
+│                     │       2kΩ │                               │
+│                     │         │                                 │
+│                     └─────────┴──► GND                           │
+│                                                                 │
+│   BAUD RATE: 9600 bps                                           │
+│   FORMAT: 8N1 (8 data, No parity, 1 stop)                       │
+│                                                                 │
+│   MESSAGE FORMAT (Arduino → ESP32):                             │
+│   "W:xx.x,T:xx.x,S:xx.x,P:x.xx,I:x\\n"                          │
+│   Where: W=Water, T=Temp, S=Slope, P=Pot, I=Interrupt           │
+│                                                                 │
+│   COMMAND FORMAT (ESP32 → Arduino):                             │
+│   "CMD:xx\\n"  (xx = alert level 0/1/2)                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**⚠️ CRITICAL:** Arduino TX outputs 5V logic, ESP32 RX is 3.3V max!
+**Without the voltage divider, you WILL damage the ESP32!**
+
+**Steps:**
+1. Connect Arduino D1 (TX) to 1kΩ resistor
+2. Connect other end of 1kΩ to ESP32 GPIO16
+3. Connect 2kΩ resistor from GPIO16 junction to GND
+4. Connect Arduino D0 (RX) to ESP32 GPIO17 (direct, 3.3V is safe)
+5. Connect Arduino GND to ESP32 GND (COMMON GROUND REQUIRED!)
+
+---
+
+## PART D — POWER DISTRIBUTION
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  POWER DISTRIBUTION NETWORK                     │
+│                                                                 │
+│   USB Power (5V 2A recommended)                                 │
+│         │                                                       │
+│    ┌────┴────┐                                                  │
+│    │         │                                                  │
+│   ┌┴┐       ┌┴┐                                                 │
+│   │ │ ESP32 │ │ Arduino                                         │
+│   └┬┘       └┬┘                                                 │
+│    │5V      │5V                                                 │
+│    │        │                                                   │
+│    └───┬────┘                                                   │
+│        │                                                        │
+│   ┌────┴────────────────────────────────────┐                  │
+│   │         5V POWER RAIL                    │                  │
+│   ├─────────────────────────────────────────┤                  │
+│   │ Components powered from 5V rail:        │                  │
+│   │ • LCD 1602 VCC                          │                  │
+│   │ • HC-SR04 VCC                           │                  │
+│   │ • PIR Sensor VCC                        │                  │
+│   │ • SG90 Servo (red wire)                 │                  │
+│   │ • Relay Module VCC                      │                  │
+│   │ • Dot Matrix VCC                        │                  │
+│   │ • Water Sensor VCC                      │                  │
+│   │ • Thermistor (via 5V)                   │                  │
+│   │ • Photoresistor (via 5V)                │                  │
+│   │ • Active Buzzer +                       │                  │
+│   │ • Passive Buzzer +                      │                  │
+│   │ • Potentiometer pin 3                   │                  │
+│   └─────────────────────────────────────────┘                  │
+│                                                                 │
+│   ┌─────────────────────────────────────────┐                  │
+│   │         3.3V POWER RAIL (ESP32 only)     │                  │
+│   ├─────────────────────────────────────────┤                  │
+│   │ Components powered from 3.3V rail:      │                  │
+│   │ • OLED Display VCC                      │                  │
+│   │ • DHT11 Pin 1                           │                  │
+│   │ • Touch Sensor VCC                      │                  │
+│   │ • Joystick VCC                          │                  │
+│   │ • Soil Sensor VCC                       │                  │
+│   │ • Obstacle Sensor VCC                   │                  │
+│   └─────────────────────────────────────────┘                  │
+│                                                                 │
+│   ┌─────────────────────────────────────────┐                  │
+│   │              GND RAIL (COMMON)           │                  │
+│   ├─────────────────────────────────────────┤                  │
+│   │ ALL grounds connect together:           │                  │
+│   │ • ESP32 GND                             │                  │
+│   │ • Arduino GND                           │                  │
+│   │ • All sensor GNDs                       │                  │
+│   │ • All LED cathodes                      │                  │
+│   │ • Voltage divider GNDs                  │                  │
+│   └─────────────────────────────────────────┘                  │
+│                                                                 │
+│   ⚠️ POWER NOTES:                                               │
+│   • Servo can draw 500mA+ under load                           │
+│   • Use separate 5V supply if servo jitters occur              │
+│   • Add 100µF capacitor across 5V/GND near servo               │
+│   • ESP32's 3.3V pin can supply ~500mA max                     │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -241,135 +996,295 @@ Display GND   ──► Arduino GND  (common cathode — connect ALL GND pins)
 ## PHYSICAL STATION LAYOUT
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                                                            │
-│  ZONE A: WATER/FLOOD          ZONE B: SOIL/DROUGHT        │
-│  ┌──────────────────┐         ┌──────────────────┐        │
-│  │ [Water tray]     │         │ [Soil cup]       │        │
-│  │  Water Level ──┐ │         │  Soil Sensor ──┐ │        │
-│  │  HC-SR04 ↕↕   │ │         │  Thermistor ──┐│ │        │
-│  │  Obstacle IR  │ │         │               ││ │        │
-│  └───────────────│─┘         └───────────────││─┘        │
-│                  │                            ││           │
-│  ZONE C: SLOPE              ZONE D: DISPLAYS  ││           │
-│  ┌──────────────────┐       ┌───────────────────┐         │
-│  │ [Cardboard wedge]│       │ [OLED] [LCD]      │         │
-│  │  Tilt switch     │       │ [7-Seg] [DotMtrx] │         │
-│  │  (15° angle)     │       └───────────────────┘         │
-│  └──────────────────┘                                      │
-│                                                            │
-│  ZONE E: CENTRAL CONTROL                                   │
-│  ┌──────────────────────────────────────────────┐         │
-│  │  [ESP32] ←──→ [Arduino Uno]                  │         │
-│  │  [Breadboard 1]   [Breadboard 2]              │         │
-│  │                                               │         │
-│  │  [GREEN LED] [BLUE LED] [YELLOW LED] [RED LED]│         │
-│  │  [Servo Flag ↑]  [Relay → Siren]              │         │
-│  │  [POT dial]  [Touch sensor]  [PIR]            │         │
-│  └──────────────────────────────────────────────┘         │
-│                                                            │
-│  [Joystick] = OLED page control                            │
-└────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              DEMO STATION LAYOUT                            │
+│                          (Top-down view, not to scale)                      │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │  ZONE A: FLOOD SIMULATION           │  ZONE B: DROUGHT MONITORING   │  │
+│   │  ┌───────────────────────────────┐  │  ┌─────────────────────────┐  │  │
+│   │  │  Plastic water tray         │  │  │  Plant pot with soil    │  │  │
+│   │  │  ┌─────────────────────┐    │  │  │  ┌───────────────────┐  │  │  │
+│   │  │  │  Water Level Sensor │    │  │  │  │ Soil Moisture     │  │  │  │
+│   │  │  │      submerged      │    │  │  │  │ probe inserted    │  │  │  │
+│   │  │  └─────────────────────┘    │  │  │  └───────────────────┘  │  │  │
+│   │  │         ↕ HC-SR04           │  │  │      ↕ Thermistor       │  │  │
+│   │  │  (20cm above water)         │  │  │  (buried in soil)       │  │  │
+│   │  │                             │  │  │                         │  │  │
+│   │  │  ┌─────────────────────┐    │  │  └─────────────────────────┘  │  │
+│   │  │  │ Obstacle IR (debris)│    │  │                               │  │
+│   │  │  └─────────────────────┘    │  │                               │  │
+│   │  └───────────────────────────────┘  │                               │  │
+│   └─────────────────────────────────────┼───────────────────────────────┘  │
+│                                         │                                   │
+│   ┌─────────────────────────────────────┼───────────────────────────────┐  │
+│   │  ZONE C: LANDSLIDE SIMULATION       │  ZONE D: DISPLAY PANEL        │  │
+│   │  ┌───────────────────────────────┐  │  ┌─────────────────────────┐  │  │
+│   │  │  Cardboard wedge (15°)       │  │  │  ┌─────┐ ┌───────────┐  │  │  │
+│   │  │  ┌─────────────────────┐     │  │  │  │ OLED│ │   LCD     │  │  │  │
+│   │  │  │  Tilt Switch        │     │  │  │  │128x64│ │  1602     │  │  │  │
+│   │  │  │  glued to surface   │     │  │  │  └─────┘ └───────────┘  │  │  │
+│   │  │  └─────────────────────┘     │  │  │                         │  │  │
+│   │  │                              │  │  │  ┌───────────────────┐  │  │  │
+│   │  │  Tip wedge to trigger        │  │  │  │ 7-Segment │ Dot   │  │  │  │
+│   │  │  landslide alarm             │  │  │  │ Display   │Matrix │  │  │  │
+│   │  │                              │  │  │  │           │ 8x8   │  │  │  │
+│   │  └───────────────────────────────┘  │  │  └───────────────────┘  │  │  │
+│   └─────────────────────────────────────┼──┴─────────────────────────┘  │
+│                                         │                                │
+│   ┌─────────────────────────────────────┴────────────────────────────┐   │
+│   │                    ZONE E: CONTROL CENTER                        │   │
+│   │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐   │   │
+│   │  │   ESP32      │◄──►│   Arduino    │    │   Breadboards    │   │   │
+│   │  │   Dev Module │    │   Uno R3     │    │   (terminal      │   │   │
+│   │  └──────────────┘    └──────────────┘    │    strips)       │   │   │
+│   │                                          └──────────────────┘   │   │
+│   │  ┌──────────────────────────────────────────────────────────┐   │   │
+│   │  │  LED ARRAY:  [GREEN] [BLUE] [YELLOW] [RED]               │   │   │
+│   │  └──────────────────────────────────────────────────────────┘   │   │
+│   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │   │
+│   │  │ SG90 Servo   │  │ Relay Module │  │ UI Controls:         │  │   │
+│   │  │ (warning     │  │ (siren       │  │ • Joystick           │  │   │
+│   │  │  flag)       │  │  output)     │  │ • Touch Sensor       │  │   │
+│   │  └──────────────┘  └──────────────┘  │ • PIR Sensor         │  │   │
+│   │                                      └──────────────────────┘  │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │  ACCESSORIES:                                                   │   │
+│   │  • Water pitcher (for flood demo)                               │   │
+│   │  • Phone/Laptop (WiFi dashboard: http://192.168.4.1)            │   │
+│   │  • External siren/lamp (connected to relay)                     │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## REQUIRED LIBRARIES — INSTALL BEFORE HACKATHON
+## STEP-BY-STEP ASSEMBLY GUIDE
 
-### For ESP32 (in Arduino IDE):
-1. `Adafruit SSD1306`           — OLED display
-2. `Adafruit GFX Library`       — Graphics (auto-installed with SSD1306)
-3. `LiquidCrystal I2C`          — LCD 1602
-4. `DHT sensor library`         — Adafruit DHT
-5. `Adafruit Unified Sensor`    — Required by DHT
-6. `ESP32Servo`                 — Servo on ESP32
-7. `MD_MAX72XX`                 — 8x8 Dot Matrix
-8. `MD_Parola`                  — (optional, for text scrolling)
+### Phase 1: Board Preparation (30 min)
 
-### For Arduino Uno:
-1. `DHT sensor library`         — Adafruit
+1. **Mount boards on base**
+   - Secure ESP32 and Arduino to foam board/cardboard using double-sided tape
+   - Leave 10cm spacing between boards for wiring
 
-### Board Manager:
-- Add ESP32 boards: File → Preferences → Board Manager URLs:
-  `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-- Install: "esp32 by Espressif Systems"
-- Select board: "ESP32 Dev Module"
+2. **Install power rails**
+   - Insert breadboard power rails along edges
+   - Connect ESP32 5V to positive rail
+   - Connect ESP32 GND to negative rail
+   - Jump power rails between breadboards
 
----
+3. **Connect common ground**
+   - Run thick GND wire from ESP32 GND to Arduino GND
+   - Connect all breadboard GND rails together
 
-## HOW TO ACCESS THE WIFI DASHBOARD
+### Phase 2: ESP32 Sensors (45 min)
 
-1. Power on the ESP32
-2. On your phone or laptop, go to WiFi settings
-3. Connect to: **GeoSense-Africa**
-4. Password: **geosense2024**
-5. Open browser → go to: **http://192.168.4.1**
-6. Dashboard auto-refreshes every 4 seconds
-7. Shows all sensor readings + risk index live
+4. **Wire I2C displays**
+   - Connect OLED (VCC→3.3V, GND→GND, SDA→GPIO21, SCL→GPIO22)
+   - Connect LCD (VCC→5V, GND→GND, SDA→GPIO21, SCL→GPIO22)
 
----
+5. **Wire DHT11**
+   - Connect with 10kΩ pull-up resistor
 
-## DEMO SCRIPT v2.0 (5 minutes)
+6. **Wire HC-SR04**
+   - Build voltage divider for ECHO pin
 
-### [0:00–0:30] BOOT SEQUENCE
-- Power on both boards
-- Watch LED chase, servo sweep, LCD welcome screen
-- "The system self-tests on every boot and raises the servo to all-clear position"
+7. **Wire remaining sensors**
+   - PIR, Soil, Obstacle, Touch, Joystick
 
-### [0:30–1:15] DROUGHT SCENARIO
-- Leave soil cup dry, cover photoresistor
-- Point at LCD: soil moisture low, ET rate rising, drought risk increasing
-- Joystick to OLED page 2: "Watch evapotranspiration climb"
-- "We detect the wilting point 72 hours before farmers see crop failure"
+### Phase 3: ESP32 Outputs (30 min)
 
-### [1:15–2:00] FLOOD SCENARIO
-- Pour water slowly into tray → water level sensor activates
-- Move hand toward HC-SR04 → distance drops → flood risk spikes
-- Wave cardboard at obstacle IR → debris detected, risk jumps
-- "Distance sensor acts as a riverbank monitor — as water rises, distance to sensor drops"
-- Watch BLUE LED light up, LCD shows FLOOD
+8. **Wire LEDs**
+   - All 4 LEDs with 220Ω current-limiting resistors
 
-### [2:00–2:30] EVACUATION DETECTION
-- Stand near PIR sensor → motion detected
-- Combined with high water level = evacuation event detected
-- "If people are already running, that's a signal itself"
+9. **Wire servo and relay**
+   - Servo to GPIO13, Relay to GPIO12
 
-### [2:30–3:15] LANDSLIDE INTERRUPT
-- Tip the tilt switch (on its cardboard wedge)
-- Buzzer SCREAMS, RED LED on, servo slams to 180°, relay fires
-- 7-seg shows 9, OLED shows RISK 9/9
-- "Hardware interrupt — zero software delay. Earth moves, alarm fires."
-- Touch sensor to acknowledge: "Village leader can silence with one touch"
+10. **Wire dot matrix**
+    - SPI connection (DIN→GPIO23, CLK→GPIO26, CS→GPIO15)
 
-### [3:15–4:00] WIFI DASHBOARD
-- Show on phone: connected to GeoSense-Africa
-- Open http://192.168.4.1
-- "Any smartphone within WiFi range gets live readings — no app needed"
-- "A regional coordinator 500m away sees the same data in real time"
+### Phase 4: Arduino Sensors (30 min)
 
-### [4:00–5:00] CLOSING
-- Turn potentiometer: "Sensitivity adapts to local terrain — this dial is the difference between a village on a stable plateau vs an unstable hillside"
-- "No satellite. No internet. No smartphone required for the sensor to work."
-- "Total cost: under $80 for both boards plus all sensors."
-- "A $10M NGO flood warning system versus a $80 GEO-SENSE node — same outcome, different scale."
+11. **Wire analog sensors**
+    - Water Level (A1), Thermistor (A2), Photoresistor (A3), Pot (A4)
 
----
+12. **Wire tilt switch**
+    - Connect to D2 (interrupt pin)
 
-## TROUBLESHOOTING v2.0
+13. **Wire buzzers**
+    - Active (D3), Passive (D11)
 
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| ESP32 crashes on boot | Library missing | Install all 7 libraries |
-| OLED blank | Wrong I2C address | Try 0x3C or 0x3D in code |
-| LCD shows garbage | Wrong I2C address | Try 0x27 or 0x3F |
-| No Serial2 data | Wrong TX/RX | RX=16, TX=17; check voltage divider |
-| Servo jitters | Power instability | Add 100µF cap across 5V/GND near servo |
-| HC-SR04 always 0 | ECHO voltage too high | Check 1kΩ+2kΩ divider on ECHO pin |
-| PIR always triggered | Sensitivity too high | Turn left trim pot anticlockwise |
-| WiFi not visible | Boot not complete | Wait 5 seconds after power-on |
-| Arduino TX damages ESP32 | No voltage divider | CRITICAL — add 1kΩ+2kΩ divider |
+### Phase 5: Arduino Outputs (15 min)
+
+14. **Wire 7-segment display**
+    - All segments through 220Ω resistors
+
+### Phase 6: Inter-Board Connection (15 min)
+
+15. **Wire serial communication**
+    - Build voltage divider for Arduino TX→ESP32 RX
+    - Connect Arduino RX→ESP32 TX (direct)
+    - Verify common ground
+
+### Phase 7: Testing (15 min)
+
+16. **Power-on test**
+    - Connect USB cables to both boards
+    - Verify no components overheat
+    - Check LED boot sequence
+
+17. **Serial monitor verification**
+    - Open Serial Monitor for ESP32 (115200 baud)
+    - Open Serial Monitor for Arduino (9600 baud)
+    - Verify "Ready" messages
 
 ---
 
-*GEO-SENSE AFRICA v2.0 | Dual-board MHEWS | Hackathon Edition*
+## TESTING & VERIFICATION
+
+### Pre-Power Checklist
+
+- [ ] All VCC connections verified (3.3V vs 5V)
+- [ ] All GND connections common
+- [ ] Voltage dividers installed (HC-SR04 ECHO, Arduino TX)
+- [ ] No loose wire strands causing shorts
+- [ ] LED polarity correct (long leg = anode)
+- [ ] I2C addresses verified (OLED 0x3C, LCD 0x27)
+
+### Power-On Sequence
+
+1. **Connect ESP32 USB first**
+   - OLED should display "GEO-SENSE AFRICA v2.0 BOOTING..."
+   - LCD should show "GEO-SENSE AFRICA"
+   - LEDs should flash green/blue 3 times
+   - Servo should sweep to 0°
+
+2. **Connect Arduino USB second**
+   - 7-segment should count 0-9 during boot
+   - 7-segment should display water level (0 when dry)
+
+3. **Verify Serial Monitor output**
+
+**ESP32 (115200 baud):**
+```
+AP IP address: 192.168.4.1
+Geo-Sense Africa v2.0 - Master Node Ready
+```
+
+**Arduino (9600 baud):**
+```
+Arduino Slave Ready
+```
+
+### Sensor Verification Tests
+
+| Sensor | Test Method | Expected Result |
+|--------|-------------|-----------------|
+| DHT11 | Breathe on sensor | Temp/humidity increase on dashboard |
+| HC-SR04 | Move hand toward sensor | Distance value decreases |
+| PIR | Wave hand in front | PIR status changes to "MOTION" |
+| Soil | Insert in dry/wet soil | Moisture % changes |
+| Water | Submerge probe | Water % increases, 7-seg value rises |
+| Thermistor | Warm with fingers | Temperature increases |
+| Tilt | Tip wedge | Buzzer sounds, RED LED, servo to 180° |
+| Joystick | Push left/right | OLED page changes |
+| Touch | Press sensor | Alerts acknowledge (silence buzzer) |
+
+---
+
+## TROUBLESHOOTING
+
+### Display Issues
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| OLED blank | Wrong I2C address | Try 0x3D instead of 0x3C |
+| OLED garbled | Loose connection | Check SDA/SCL wiring |
+| LCD shows blocks | Wrong I2C address | Try 0x3F instead of 0x27 |
+| LCD backlight only | Contrast issue | Adjust LCD potentiometer |
+| Dot Matrix random pixels | Wrong SPI pins | Verify DIN=23, CLK=26, CS=15 |
+
+### Sensor Issues
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| DHT11 reads NaN | Missing pull-up | Add 10kΩ between DATA and VCC |
+| HC-SR04 always 0cm | ECHO voltage high | Verify 1kΩ+2kΩ divider |
+| HC-SR04 always 400cm | No echo received | Check TRIG connection |
+| PIR always triggered | Sensitivity max | Turn left pot counter-clockwise |
+| Soil reads 0% | Wrong power | Verify 3.3V (not 5V) |
+| Water reads 100% | Probe shorted | Clean probe, check wiring |
+
+### Communication Issues
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| No Serial2 data | Wrong TX/RX | Verify RX=16, TX=17 |
+| Garbage serial data | Baud mismatch | Verify 9600 baud both sides |
+| ESP32 resets randomly | Missing common GND | Connect ESP32 GND to Arduino GND |
+| Intermittent data | Loose wires | Solder or use screw terminals |
+
+### Power Issues
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| Servo jitters | Insufficient current | Add 100µF cap across 5V/GND |
+| ESP32 brownouts | USB underpowered | Use 2A USB supply |
+| LEDs dim | High resistance | Check ground connections |
+| Random resets | Power noise | Add decoupling capacitors |
+
+### WiFi Issues
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| AP not visible | Boot incomplete | Wait 5 seconds after power-on |
+| Can't connect | Wrong password | Verify "geosense2024" |
+| Dashboard won't load | Wrong URL | Use http://192.168.4.1 (not https) |
+| Data not updating | JavaScript error | Clear browser cache |
+
+---
+
+## SAFETY WARNINGS
+
+⚠️ **ELECTRICAL SAFETY**
+- Never connect 5V to ESP32 GPIO pins (except via voltage divider)
+- Always disconnect USB before modifying wiring
+- Double-check polarity before powering electrolytic capacitors
+
+⚠️ **WATER SAFETY**
+- Keep water tray away from electronics
+- Use battery power or GFCI-protected USB hub for demo
+- Dry all sensors before storage
+
+⚠️ **SERVO SAFETY**
+- Servo can draw high current under stall conditions
+- Use separate 5V supply if multiple servos
+- Don't force servo mechanically while powered
+
+---
+
+## MAINTENANCE
+
+### After Each Demo
+1. Dry all water-exposed sensors
+2. Disconnect USB power
+3. Store in anti-static bag
+
+### Monthly
+1. Check all wire connections for corrosion
+2. Verify voltage divider resistors
+3. Test all sensors with Serial Monitor
+
+### Before Competition
+1. Replace all jumper wires (fatigue can cause breaks)
+2. Re-solder any cold joints
+3. Update libraries to latest versions
+4. Re-flash both boards with final code
+
+---
+
+*GEO-SENSE AFRICA v2.0 | Dual-board Multi-Hazard Early Warning System*  
+*Hack Keele Hackathon 2026*  
 *Africa's last-mile disaster shield — built from two starter kits.*
