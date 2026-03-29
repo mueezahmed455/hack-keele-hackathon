@@ -1,20 +1,17 @@
 // ================================================================
-//  GEO-SENSE AFRICA v4.3 — ARDUINO UNO SLAVE NODE
-//  Multi-Hazard Early Warning System — Edge Processing Unit
+//  GEO-SENSE AFRICA v4.4 — ARDUINO UNO SLAVE NODE
+//  Professional UI & Web Analytics Refactor — High Density
 // ================================================================
 //
-//  SERIAL PROTOCOL (CORE ESSENTIALS + TELEMETRY)
+//  SERIAL TELEMETRY (9600 Baud)
 //  ─────────────────────────────────────────────────────────────
-//  TX Format: W:xx.x,T:xx.x,S:xx.x,P:x.xx,I:x
-//  Local Debug: [SLAVE] Water: XX% | Soil Temp: XXC | Slope: XX% | Pot: X.XX | Tilt: X
-//  Packet Log:  [TX] W:xx.x,T:xx.x,S:xx.x,P:x.xx,I:x
+//  Packet Log:  W:xx.x,T:xx.x,S:xx.x,P:x.xx,I:x
+//  JSON Log:    {"node":"slave", "water":XX.X, "temp":XX.X, "slope":XX.X, "tilt":X}
 // ================================================================
 
 #include <avr/wdt.h>
 
-// ════════════════════════════════════════════════════════════
-//  PIN DEFINITIONS
-// ════════════════════════════════════════════════════════════
+// ── PINS ─────────────────────────────────────────────────────
 #define PIN_WATER_LEVEL     A1
 #define PIN_THERMISTOR      A2
 #define PIN_POTENTIOMETER   A4
@@ -22,54 +19,36 @@
 #define PIN_BUZZER_ACTIVE   3
 #define PIN_BUZZER_PASSIVE  11
 
-// ════════════════════════════════════════════════════════════
-//  CONFIGURATION
-// ════════════════════════════════════════════════════════════
+// ── CONFIG ───────────────────────────────────────────────────
 #define THERMISTOR_NOMINAL  10000.0f
 #define SERIES_RESISTOR     10000.0f
 #define BCOEFFICIENT        3950.0f
 #define TEMP_NOMINAL        298.15f
 
-#define TX_INTERVAL_MS      2000UL
-#define DEBUG_INTERVAL_MS   2000UL
-#define SAMPLE_INTERVAL_MS   150UL
+#define TX_INTERVAL         2000UL
+#define JSON_INTERVAL       3000UL
+#define SAMPLE_INTERVAL      150UL
 #define EMA_ALPHA           0.3f
 
-// ════════════════════════════════════════════════════════════
-//  STATE
-// ════════════════════════════════════════════════════════════
+// ── STATE ────────────────────────────────────────────────────
 volatile bool     tiltTriggered = false;
 volatile uint32_t tiltMs        = 0;
-volatile uint32_t lastTiltEventMs = 0;
+volatile uint32_t lastTiltMs    = 0;
 
-float waterLevel     = 0.0f;
-float thermistorTemp = 25.0f;
-float potCalibration = 1.0f;
-float slopePct       = 0.0f;
-float ema_water      = 0.0f;
+float waterLevel = 0.0f, thermistorTemp = 25.0f, potCalibration = 1.0f, slopePct = 0.0f, ema_water = 0.0f;
+uint32_t lastTx = 0, lastJson = 0, lastSample = 0, lastBuz = 0;
+int cmdAlert = 0;
+bool buzzerOn = false;
 
-static uint32_t lastTxMs     = 0;
-static uint32_t lastDebugMs  = 0;
-static uint32_t lastSampleMs = 0;
-static uint32_t lastBuzMs    = 0;
-static int      cmdAlertLevel = 0;
-static bool     buzzerWasOn   = false;
+char rxBuf[32];
+uint8_t rxIdx = 0;
 
-char serialBuffer[32];
-uint8_t serialIdx = 0;
-
-// ════════════════════════════════════════════════════════════
-//  ISR
-// ════════════════════════════════════════════════════════════
 void LANDSLIDE_ISR() {
   tiltTriggered = true;
   tiltMs = millis();
-  lastTiltEventMs = tiltMs;
+  lastTiltMs = tiltMs;
 }
 
-// ════════════════════════════════════════════════════════════
-//  SETUP
-// ════════════════════════════════════════════════════════════
 void setup() {
   wdt_enable(WDTO_4S);
   Serial.begin(9600);
@@ -82,131 +61,75 @@ void setup() {
   digitalWrite(PIN_BUZZER_ACTIVE, LOW);
   noTone(PIN_BUZZER_PASSIVE);
 
-  Serial.println(F("[SYS] GEO-SENSE Slave v4.3 Ready"));
-  wdt_reset();
+  Serial.println(F("{\"node\":\"slave\",\"status\":\"booting\",\"ver\":\"4.4\"}"));
 }
 
-// ════════════════════════════════════════════════════════════
-//  MAIN LOOP
-// ════════════════════════════════════════════════════════════
 void loop() {
   wdt_reset();
   const uint32_t now = millis();
 
-  // ── TILT LOGIC ────────────────────────────────────────────
   bool tiltNow;
-  {
-    noInterrupts();
-    tiltNow = tiltTriggered;
-    interrupts();
-  }
+  { noInterrupts(); tiltNow = tiltTriggered; interrupts(); }
+  if (tiltNow && (now - tiltMs > 15000UL)) { noInterrupts(); tiltTriggered = false; interrupts(); }
 
-  if (tiltNow && (now - tiltMs > 15000UL)) {
-    noInterrupts(); tiltTriggered = false; interrupts();
-  }
+  // Slope Decay
+  if (now - lastTiltMs > 30000UL) slopePct = max(0.0f, slopePct - 2.0f);
+  else if (tiltNow) slopePct = min(100.0f, slopePct + 30.0f);
 
-  // ── SLOPE DECAY ───────────────────────────────────────────
-  if (now - lastTiltEventMs > 30000UL) {
-    slopePct = max(0.0f, slopePct - 2.0f);
-  } else if (tiltNow) {
-    slopePct = min(100.0f, slopePct + 30.0f);
-  }
-
-  // ── SENSORS ───────────────────────────────────────────────
-  if (now - lastSampleMs >= SAMPLE_INTERVAL_MS) {
-    lastSampleMs = now;
-    
-    int rawW = analogRead(PIN_WATER_LEVEL);
-    float wPct = constrain((float)map(rawW, 0, 700, 0, 100), 0.0f, 100.0f);
-    ema_water = (EMA_ALPHA * wPct) + ((1.0f - EMA_ALPHA) * ema_water);
+  // Sampling
+  if (now - lastSample >= SAMPLE_INTERVAL) {
+    lastSample = now;
+    float wRaw = (float)map(analogRead(PIN_WATER_LEVEL), 0, 700, 0, 100);
+    ema_water = (EMA_ALPHA * constrain(wRaw,0,100)) + ((1.0f - EMA_ALPHA) * ema_water);
     waterLevel = ema_water;
 
-    int rawT = analogRead(PIN_THERMISTOR);
-    if (rawT > 10 && rawT < 1010) {
-      float res = SERIES_RESISTOR * ((1023.0f / (float)rawT) - 1.0f);
+    int tRaw = analogRead(PIN_THERMISTOR);
+    if (tRaw > 10 && tRaw < 1010) {
+      float res = SERIES_RESISTOR * ((1023.0f / (float)tRaw) - 1.0f);
       float invT = (1.0f / TEMP_NOMINAL) + (log(res / THERMISTOR_NOMINAL) / BCOEFFICIENT);
       thermistorTemp = (1.0f / invT) - 273.15f;
     }
-
-    int rawP = analogRead(PIN_POTENTIOMETER);
-    potCalibration = (float)map(rawP, 0, 1023, 50, 200) / 100.0f;
+    potCalibration = (float)map(analogRead(PIN_POTENTIOMETER), 0, 1023, 50, 200) / 100.0f;
   }
 
-  // ── SERIAL RX ─────────────────────────────────────────────
+  // Serial RX
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\n' || c == '\r') {
-      serialBuffer[serialIdx] = '\0';
-      if (strncmp(serialBuffer, "CMD:", 4) == 0) cmdAlertLevel = atoi(serialBuffer + 4);
-      serialIdx = 0;
-    } else if (serialIdx < 31) serialBuffer[serialIdx++] = c;
-    else serialIdx = 0;
+      rxBuf[rxIdx] = '\0';
+      if (strncmp(rxBuf, "CMD:", 4) == 0) cmdAlert = atoi(rxBuf + 4);
+      rxIdx = 0;
+    } else if (rxIdx < 31) rxBuf[rxIdx++] = c;
   }
 
-  // ── ALERTS ────────────────────────────────────────────────
-  handleAlerts(tiltNow, now);
-
-  // ── TELEMETRY & TRANSMIT ──────────────────────────────────
-  if (now - lastDebugMs >= DEBUG_INTERVAL_MS) {
-    lastDebugMs = now;
-    Serial.print(F("[SLAVE] Water: ")); Serial.print((int)waterLevel);
-    Serial.print(F("% | Soil Temp: ")); Serial.print((int)thermistorTemp);
-    Serial.print(F("C | Slope: "));      Serial.print((int)slopePct);
-    Serial.print(F("% | Pot: "));        Serial.print(potCalibration);
-    Serial.print(F(" | Tilt: "));       Serial.println(tiltNow ? 1 : 0);
-  }
-
-  if (now - lastTxMs >= TX_INTERVAL_MS) {
-    lastTxMs = now;
-    transmitToESP32(tiltNow);
-  }
-}
-
-void handleAlerts(bool tiltNow, uint32_t now) {
+  // Alerts
   if (tiltNow) {
-    if (!buzzerWasOn) {
-      tone(PIN_BUZZER_PASSIVE, 2500);
-      digitalWrite(PIN_BUZZER_ACTIVE, HIGH);
-      buzzerWasOn = true;
-    }
-    return;
+    if (!buzzerOn) { tone(PIN_BUZZER_PASSIVE, 2500); digitalWrite(PIN_BUZZER_ACTIVE, HIGH); buzzerOn = true; }
+  } else {
+    if (cmdAlert >= 2) {
+      if (now - lastBuz > 450) { lastBuz = now; static bool p=0; tone(PIN_BUZZER_PASSIVE, (p=!p)?1800:2000, 180); buzzerOn=1; }
+    } else if (cmdAlert == 1) {
+      if (now - lastBuz > 3000) { lastBuz = now; tone(PIN_BUZZER_PASSIVE, 880, 120); buzzerOn=0; }
+    } else if (buzzerOn) { noTone(PIN_BUZZER_PASSIVE); digitalWrite(PIN_BUZZER_ACTIVE, LOW); buzzerOn=0; }
   }
 
-  if (cmdAlertLevel >= 2) {
-    if (now - lastBuzMs > 450) {
-      lastBuzMs = now;
-      static bool phase = false;
-      phase = !phase;
-      tone(PIN_BUZZER_PASSIVE, phase ? 1800 : 2000, 180);
-      buzzerWasOn = true;
-    }
-  } else if (cmdAlertLevel == 1) {
-    if (now - lastBuzMs > 3000) {
-      lastBuzMs = now;
-      tone(PIN_BUZZER_PASSIVE, 880, 120);
-      buzzerWasOn = false;
-    }
-  } else if (buzzerWasOn) {
-    noTone(PIN_BUZZER_PASSIVE);
-    digitalWrite(PIN_BUZZER_ACTIVE, LOW);
-    buzzerWasOn = false;
+  // Transmit
+  if (now - lastTx >= TX_INTERVAL) {
+    lastTx = now;
+    Serial.print(F("W:")); Serial.print(waterLevel,1);
+    Serial.print(F(",T:")); Serial.print(thermistorTemp,1);
+    Serial.print(F(",S:")); Serial.print(slopePct,1);
+    Serial.print(F(",P:")); Serial.print(potCalibration,2);
+    Serial.print(F(",I:")); Serial.println(tiltNow?1:0);
   }
-}
 
-void transmitToESP32(bool tiltNow) {
-  char packet[48];
-  int w_i = (int)waterLevel;
-  int w_f = (int)fabsf((waterLevel - w_i) * 10.0f) % 10;
-  int t_i = (int)thermistorTemp;
-  int t_f = (int)fabsf((thermistorTemp - t_i) * 10.0f) % 10;
-  int s_i = (int)slopePct;
-  int s_f = (int)fabsf((slopePct - s_i) * 10.0f) % 10;
-  int p_i = (int)potCalibration;
-  int p_f = (int)fabsf((potCalibration - p_i) * 100.0f) % 100;
-
-  snprintf(packet, sizeof(packet), "W:%d.%d,T:%d.%d,S:%d.%d,P:%d.%02d,I:%d",
-           w_i, w_f, t_i, t_f, s_i, s_f, p_i, p_f, tiltNow ? 1 : 0);
-
-  Serial.print(F("[TX] "));
-  Serial.println(packet);
+  // JSON Telemetry
+  if (now - lastJson >= JSON_INTERVAL) {
+    lastJson = now;
+    Serial.print(F("{\"node\":\"slave\",\"water\":")); Serial.print(waterLevel,1);
+    Serial.print(F(",\"temp\":")); Serial.print(thermistorTemp,1);
+    Serial.print(F(",\"slope\":")); Serial.print(slopePct,1);
+    Serial.print(F(",\"tilt\":")); Serial.print(tiltNow?1:0);
+    Serial.println(F("}"));
+  }
 }
